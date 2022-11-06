@@ -7,14 +7,15 @@ pub struct BloomFilter {
     pub data: Vec<u8>,
     size: usize,
     seed: u32,
-    number_of_bits: f64,
+    //number_of_bits: f64,
     num_of_hash_functions: f64
 }
 
 impl BloomFilter {
     
     pub fn new(max_size: usize, max_tolerance: Option<f32>, seed: Option<u32>) -> RustyResult<BloomFilter> {
-        let max_tolerance = evalexpr::eval(&format!("math::ln({})", max_tolerance.unwrap_or(0.01)))?.as_float()?;
+        let max_tolerance = evalexpr::eval(&format!("math::ln({})", max_tolerance.unwrap_or(1.0)))?.as_float()?;
+        println!("{:?}", max_tolerance);
         let ln2 = evalexpr::eval("math::ln(2)")?.as_float()?;
         let calc = -(max_size as f64 * max_tolerance / ln2 / ln2).ceil();
         let num_of_hash_functions = -(max_tolerance / ln2).ceil();
@@ -24,7 +25,7 @@ impl BloomFilter {
             data: vec![0; num_of_elements],
             seed: seed.unwrap_or(rand::random()),
             size: 0,
-            number_of_bits: calc,
+            //number_of_bits: calc,
             num_of_hash_functions
         })
     } 
@@ -56,6 +57,11 @@ impl BloomFilter {
         }
     }
 
+    /* 
+    pub fn false_positive_probability(&self) -> f64 {
+        (1.0 - std::f64::consts::E.powf(self.num_of_hash_functions * self.size as f64 / self.number_of_bits)).powf(self.num_of_hash_functions)
+    } */
+
     fn read_bit(&self, index: usize) -> bool {
         let (element, bit) = self.find_bit_coordinates(index);
         if let Some(value) = self.data.get(element) {
@@ -63,10 +69,6 @@ impl BloomFilter {
             return result == 1;
         }
         false
-    }
-
-    fn false_positive_probability(&self) -> f64 {
-        (1.0 - std::f64::consts::E.powf(self.num_of_hash_functions * self.size as f64 / self.number_of_bits)).powf(self.num_of_hash_functions)
     }
 
     fn write_bit(&mut self, index: usize) {
@@ -88,7 +90,30 @@ impl BloomFilter {
         let fnv1_result = const_fnv1a_hash::fnv1a_hash_128(key, None);
 
         (0..(self.num_of_hash_functions as u128))
-        .map(|x| (murmur_result.wrapping_add(x.wrapping_mul(fnv1_result)).wrapping_add(x.wrapping_mul(x))) % BITS_PER_SEGMENT as u128)
+        .map(|x| (murmur_result.wrapping_add(x.wrapping_mul(fnv1_result)).wrapping_add(x.wrapping_mul(x))) % (self.data.len() * BITS_PER_SEGMENT) as u128)
         .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contains_oneelement_true() {
+        let mut bloom = BloomFilter::new(8, None, None).unwrap();
+        bloom.insert(&1_u32.to_be_bytes());
+        let result = bloom.contains(&1_u32.to_be_bytes(), None);
+
+        assert!(result);
+    }
+
+    #[test]
+    fn contains_oneelement_false() {
+        let mut bloom = BloomFilter::new(8, None, None).unwrap();
+        bloom.insert(&1_u32.to_be_bytes());
+        let result = bloom.contains(&5_u32.to_be_bytes(), None);
+
+        assert!(!result);
     }
 }

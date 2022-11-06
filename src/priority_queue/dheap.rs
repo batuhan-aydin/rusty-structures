@@ -174,20 +174,7 @@ impl<T: Clone + Display + PartialEq> DHeap<T> {
     }
 }
 
-#[derive(Debug)]
-enum DheapError {
-    EmptyHeap
-}
-
-impl std::error::Error for DheapError {}
-impl Display for DheapError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::EmptyHeap => write!(f, "empty heap")
-        }
-    }
-}
-
+#[cfg(test)]
 mod tests {
     use super::*;
 
