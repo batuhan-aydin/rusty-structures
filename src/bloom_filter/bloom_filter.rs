@@ -1,4 +1,4 @@
-use crate::{RustyResult};
+use anyhow::Result;
 
 const BITS_PER_SEGMENT: usize = 8;
 
@@ -13,9 +13,8 @@ pub struct BloomFilter {
 
 impl BloomFilter {
     
-    pub fn new(max_size: usize, max_tolerance: Option<f32>, seed: Option<u32>) -> RustyResult<BloomFilter> {
+    pub fn new(max_size: usize, max_tolerance: Option<f32>, seed: Option<u32>) -> Result<BloomFilter> {
         let max_tolerance = evalexpr::eval(&format!("math::ln({})", max_tolerance.unwrap_or(1.0)))?.as_float()?;
-        println!("{:?}", max_tolerance);
         let ln2 = evalexpr::eval("math::ln(2)")?.as_float()?;
         let calc = -(max_size as f64 * max_tolerance / ln2 / ln2).ceil();
         let num_of_hash_functions = -(max_tolerance / ln2).ceil();
@@ -39,6 +38,7 @@ impl BloomFilter {
                 &tmp_new
             }
         };
+        println!("{:?}", positions);
         for position in positions {
             if !self.read_bit(*position as usize) {
                 return false;
@@ -112,7 +112,7 @@ mod tests {
     fn contains_oneelement_false() {
         let mut bloom = BloomFilter::new(8, None, None).unwrap();
         bloom.insert(&1_u32.to_be_bytes());
-        let result = bloom.contains(&5_u32.to_be_bytes(), None);
+        let result = bloom.contains(&2_u32.to_be_bytes(), None);
 
         assert!(!result);
     }

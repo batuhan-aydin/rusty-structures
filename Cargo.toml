@@ -14,7 +14,12 @@ An experimental data structures and algorithms library.
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-const-fnv1a-hash = "1.1.0"
-fastmurmur3 = "0.1.2"
-rand = "0.8.5"
+anyhow = "^1.0.66"
+thiserror = "^1.0.37"
+const-fnv1a-hash = "^1.1.0"
+fastmurmur3 = "^0.1.2"
+rand = "^0.8.5"
 evalexpr = "8.1.0"
+bitvec = "^1.0.1"
+twox-hash = "^1.6.3"
+const-murmur3 = "^0.2.1"
