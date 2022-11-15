@@ -1,5 +1,3 @@
-use thiserror::Error;
-
 pub mod quotient_filter;
 pub mod slot;
 
@@ -12,10 +10,4 @@ enum MetadataType {
     BucketOccupied,
     RunContinued,
     IsShifted
-}
-
-#[derive(Error, Debug)]
-enum QuotientFilterError {
-    #[error("Out of index: {0}")]
-    OutOfIndex(usize)
 }

@@ -8,7 +8,7 @@ pub struct QuotientFilter {
     quotient: u32,
     remainder: u32,
     size: u32,
-    pub table: Vec<Slot>  
+    table: Vec<Slot>  
 }
 
 impl QuotientFilter {

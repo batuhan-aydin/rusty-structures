@@ -4,7 +4,7 @@ use super::MetadataType;
 /// Metadata bits are, bucket_occupied, run_continued and is_shifted
 /// However, we can't use anything smaller than a byte, so we'll use a byte and waste 5 bits.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Slot {
+pub(super) struct Slot {
     pub(super) remainder: u64,
     metadata: u8
 }
