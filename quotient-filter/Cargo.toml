@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["quotient", "filter", "hash"]
 categories = ["data-structures", "algorithms"]
 license = "MIT"
-license-file = "LICENSE.md"
+license-file = "LICENSE"
 
 [dependencies]
 anyhow = "^1.0.66"
