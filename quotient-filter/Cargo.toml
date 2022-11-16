@@ -2,8 +2,13 @@
 name = "quotient-filter"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Batuhan Aydın <batuhanaydin501@gmail.com>"]
+description = "A quotient filter implementation."
+repository = "https://github.com/batuhan-aydin/rusty-structures/tree/main/quotient-filter"
+documentation = "https://docs.rs/quotient-filter"
+readme = "README.md"
+keywords = ["quotient", "filter", "hash"]
+categories = ["data-structures", "algorithms"]
 
 [dependencies]
 anyhow = "^1.0.66"
