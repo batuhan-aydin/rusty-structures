@@ -1,3 +1,5 @@
+use crate::QuotientFilterError;
+
 use super::{MetadataType, slot::Slot};
 use anyhow::{Result, Ok};
 
@@ -95,8 +97,7 @@ impl QuotientFilter {
 
         } 
 
-
-        Ok(0)
+        Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientAccess(quotient)))
     }
 
     /// Returns if the element exists, by using custom fingerprint

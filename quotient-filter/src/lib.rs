@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use thiserror::Error;
 
 pub mod quotient_filter;
 pub mod slot;
@@ -12,4 +13,10 @@ enum MetadataType {
     BucketOccupied,
     RunContinued,
     IsShifted
+}
+
+#[derive(Error, Debug)]
+enum QuotientFilterError {
+    #[error("Invalid quotient access: `{0}`")]
+    InvalidQuotientAccess(usize)
 }
