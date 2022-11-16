@@ -8,7 +8,7 @@ pub struct QuotientFilter {
     quotient: usize,
     remainder: u32,
     size: usize,
-    table: Vec<Slot>  
+    pub table: Vec<Slot>  
 }
 
 impl QuotientFilter {
@@ -25,12 +25,13 @@ impl QuotientFilter {
         self.insert(fingerprint)
     }
 
+    /// Reads byte-value using fnv1a
     pub fn read_value(&mut self, value: &[u8]) -> Result<bool> {
         let fingerprint =  const_fnv1a_hash::fnv1a_hash_64(value, None);
         self.lookup(fingerprint)
     }
 
-    /// Inserts the element and returns the index
+    /// Inserts the element by using custom fingerprint and returns the index
     pub fn insert(&mut self, fingerprint: u64) -> Result<usize> {
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint)?;
         // mark the appropriate as occupied
@@ -42,52 +43,48 @@ impl QuotientFilter {
                 return Ok(quotient);
             }
 
-            let mut b = quotient;
             // Going to start of the cluster. Cluster is one or more runs.
-            while let Some(bucket) = self.table.get(b) {
-                if bucket.get_metadata(MetadataType::IsShifted) { b = self.index_down(b) }
-                else { break; }
-            }
+            let mut b = self.get_start_of_the_cluster(quotient);
             let mut s = b;
             // We want to skip runs that have different quotient here
-            // b tracks occupied buckets, and s tracks corresponding runs
+            // b tracks occupied slots, and s tracks corresponding runs
             while b != quotient {
                 // go to lowest in the run
                 s = self.index_up(s);
-                while let Some(bucket) = self.table.get(s) {
-                    if bucket.get_metadata(MetadataType::RunContinued) { s = self.index_up(s) }
-                    else { break; }
-                }
+                s = self.get_lowest_of_run(s);
                 b = self.index_up(b);
 
-                // skip empty buckets
-                while let Some(bucket) = self.table.get(b) {
-                    if !bucket.get_metadata(MetadataType::BucketOccupied) { b = self.index_up(s) }
-                    else { break; }
-                }
+                // skip empty slots
+                b = self.skip_empty_slots(b);
             }
 
             // Find the insert spot
+            // s is here at the start of the run
+            let mut first_run = false;
             while let Some(bucket) = self.table.get(s) {
-                if bucket.remainder != 0 && remainder > bucket.remainder { s  = self.index_up(s) }
-                else { break; }
+                if !bucket.is_empty() && remainder > bucket.remainder { s  = self.index_up(s) }
+                else { first_run = true; break; }
             }
 
+            //  If it came to here, the quotient's place must be full. So it has to be shifted.
             let insert_index = s;
-            let mut new_slot = self.table[s].new_from_slot(remainder);
-            new_slot.set_metadata(MetadataType::IsShifted);
-            new_slot.set_metadata(MetadataType::RunContinued);
+            let mut new_slot = Slot::new_with_reminder(remainder);
+            if quotient != insert_index { new_slot.set_metadata(MetadataType::IsShifted) };
+            if first_run { new_slot.set_metadata(MetadataType::RunContinued); }
+
             // shift other ones
             // while we are shifting buckets, is_shifted should be updated as 1
             // however we shouldn't shift bucket_occupied bits
             let mut tmp_bucket = Slot::default();
             while let Some(bucket) = self.table.get_mut(s) {
+                if bucket.is_empty() { break; }
+
                 if tmp_bucket.get_metadata(MetadataType::BucketOccupied) { tmp_bucket.set_metadata(MetadataType::BucketOccupied); }
                 tmp_bucket = std::mem::replace(bucket, tmp_bucket);
                 tmp_bucket.set_metadata(MetadataType::IsShifted);
                 s = self.index_up(s);
                 
-                if self.table[s].remainder == 0 {
+                if self.table[s].is_empty() {
                     self.table[s] = tmp_bucket;
                     break;
                 }
@@ -102,9 +99,7 @@ impl QuotientFilter {
         Ok(0)
     }
 
-    /// Returns if the element exists.
-    /// Fingerprint is the result of the hash(element).
-    // In order to find, we have to search the whole cluster. Cluster is one or more run sequence. A run is a sequence of remainders that have the same quotient.
+    /// Returns if the element exists, by using custom fingerprint
     pub fn lookup(&mut self, fingerprint: u64) -> Result<bool> {
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint)?;
 
@@ -112,12 +107,11 @@ impl QuotientFilter {
         if let Some(bucket) = self.table.get(quotient) {
             if !bucket.get_metadata(MetadataType::BucketOccupied) { return Ok(false); }
         } else { return Ok(false); }
-        let mut b = quotient;
-        // Going to start of the cluster. Cluster is one or more runs.
-        while let Some(bucket) = self.table.get(b) {
-            if bucket.get_metadata(MetadataType::IsShifted) { b = self.index_down(b); }
-            else { break; }
-        }
+
+
+         // Going to start of the cluster. Cluster is one or more runs.
+        let mut b = self.get_start_of_the_cluster(quotient);
+
         let mut s = b;
 
         // We want to skip runs that have different quotient here
@@ -125,17 +119,11 @@ impl QuotientFilter {
         while b != quotient {
             // go to lowest in the run
             s = self.index_up(s);
-            while let Some(bucket) = self.table.get(s) {
-                if bucket.get_metadata(MetadataType::RunContinued) { s = self.index_up(s); }
-                else { break; }
-            }
+            s = self.get_lowest_of_run(s);
             b = self.index_up(b);
 
             // skip empty buckets
-            while let Some(bucket) = self.table.get(b) {
-                if !bucket.get_metadata(MetadataType::BucketOccupied) { b = self.index_up(b); }
-                else { break; }
-            }
+            b = self.skip_empty_slots(b);
         }
 
         // Now s is at the start of the run where our element might be in
@@ -158,14 +146,41 @@ impl QuotientFilter {
         Ok((quotient_usize, remainder))
     }
 
+    fn get_start_of_the_cluster(&self, start_index: usize) -> usize {
+        let mut index = start_index;
+        while let Some(slot) = self.table.get(index) {
+            if slot.get_metadata(MetadataType::IsShifted) { index = self.index_down(index); }
+            else { break; }
+        }
+        index
+    }
+
+    fn get_lowest_of_run(&self, start_index: usize) -> usize {
+        let mut index = start_index;
+        while let Some(slot) = self.table.get(index) {
+            if slot.get_metadata(MetadataType::RunContinued) { index = self.index_up(index) }
+            else { break; }
+        }
+        index
+    }
+
+    fn skip_empty_slots(&self, start_index: usize) -> usize {
+        let mut index = start_index;
+        while let Some(bucket) = self.table.get(index) {
+            if !bucket.get_metadata(MetadataType::BucketOccupied) { index = self.index_up(index) }
+            else { break; }
+        }
+        index
+    }
+
     #[inline(always)]
     fn index_up(&self, old_index: usize) -> usize {
-        (old_index + 1) % (self.size - 1)
+        (old_index + 1) % (self.size)
     }
 
     #[inline(always)]
     fn index_down(&self, old_index: usize) -> usize {
-        if old_index == 0 { return self.size - 1; }
+        if old_index == 0 { return self.size; }
         old_index - 1
     }
 

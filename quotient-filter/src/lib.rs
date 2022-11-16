@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod quotient_filter;
 pub mod slot;
 
