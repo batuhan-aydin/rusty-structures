@@ -28,9 +28,61 @@ impl QuotientFilter {
     }
 
     /// Reads byte-value using fnv1a
-    pub fn read_value(&mut self, value: &[u8]) -> Result<bool> {
+    pub fn read_value(&mut self, value: &[u8]) -> bool {
         let fingerprint =  const_fnv1a_hash::fnv1a_hash_64(value, None);
         self.lookup(fingerprint)
+    }
+
+    /// Deleted byte-value using fnv1a
+    pub fn delete_value(&mut self, value: &[u8]) {
+        let fingerprint =  const_fnv1a_hash::fnv1a_hash_64(value, None);
+        self.delete(fingerprint);
+    }
+
+    pub fn delete(&mut self, fingerprint: u64)  {
+        if let Some(index) = self.get_index(fingerprint) {
+            self.table[index].set_metadata(MetadataType::Tombstone);
+            self.table[index].clear_metadata(MetadataType::BucketOccupied);
+        }
+    }
+
+    pub fn get_index(&self, fingerprint: u64) -> Option<usize> {
+        let (quotient, remainder) = self.fingerprint_destruction(fingerprint).unwrap_or_default();
+
+        if quotient == usize::default() && remainder == u64::default() { return None; }
+
+        // The buckets are quotient-indexed. Remember, we have number of 2^quotient buckets.
+        if let Some(bucket) = self.table.get(quotient) {
+            if !bucket.get_metadata(MetadataType::BucketOccupied) { return None; }
+        } else { return None; }
+
+         // Going to start of the cluster. Cluster is one or more runs.
+        let mut b = self.get_start_of_the_cluster(quotient);
+
+        let mut s = b;
+
+        // We want to skip runs that have different quotient here
+        // b tracks occupied buckets, and s tracks corresponding runs
+        while b != quotient {
+            // go to lowest in the run
+            s = self.index_up(s);
+            s = self.get_lowest_of_run(s);
+            b = self.index_up(b);
+
+            // skip empty buckets
+            b = self.skip_empty_slots(b);
+        }
+
+        // Now s is at the start of the run where our element might be in
+        while let Some(bucket) = self.table.get(s) {
+            if bucket.remainder != remainder {
+                s = self.index_up(s);
+                if !self.table[s].get_metadata(MetadataType::RunContinued) { return None; }
+            } else {
+                break;
+            }
+        }  
+        Some(s)
     }
 
     /// Inserts the element by using custom fingerprint and returns the index
@@ -40,7 +92,8 @@ impl QuotientFilter {
         if let Some(bucket) = self.table.get_mut(quotient) {
             bucket.set_metadata(MetadataType::BucketOccupied);
             // if selected is empty, we can set and return
-            if bucket.remainder == 0 {
+            if bucket.is_empty() {
+                bucket.clear_metadata(MetadataType::Tombstone);
                 bucket.set_remainder(remainder);               
                 return Ok(quotient);
             }
@@ -70,7 +123,7 @@ impl QuotientFilter {
 
             //  If it came to here, the quotient's place must be full. So it has to be shifted.
             let insert_index = s;
-            let mut new_slot = Slot::new_with_reminder(remainder);
+            let mut new_slot = Slot::new_with_remainder(remainder);
             if quotient != insert_index { new_slot.set_metadata(MetadataType::IsShifted) };
             if first_run { new_slot.set_metadata(MetadataType::RunContinued); }
 
@@ -101,42 +154,8 @@ impl QuotientFilter {
     }
 
     /// Returns if the element exists, by using custom fingerprint
-    pub fn lookup(&mut self, fingerprint: u64) -> Result<bool> {
-        let (quotient, remainder) = self.fingerprint_destruction(fingerprint)?;
-
-        // The buckets are quotient-indexed. Remember, we have number of 2^quotient buckets.
-        if let Some(bucket) = self.table.get(quotient) {
-            if !bucket.get_metadata(MetadataType::BucketOccupied) { return Ok(false); }
-        } else { return Ok(false); }
-
-
-         // Going to start of the cluster. Cluster is one or more runs.
-        let mut b = self.get_start_of_the_cluster(quotient);
-
-        let mut s = b;
-
-        // We want to skip runs that have different quotient here
-        // b tracks occupied buckets, and s tracks corresponding runs
-        while b != quotient {
-            // go to lowest in the run
-            s = self.index_up(s);
-            s = self.get_lowest_of_run(s);
-            b = self.index_up(b);
-
-            // skip empty buckets
-            b = self.skip_empty_slots(b);
-        }
-
-        // Now s is at the start of the run where our element might be in
-        while let Some(bucket) = self.table.get(s) {
-            if bucket.remainder != remainder {
-                s = self.index_up(s);
-                if !self.table[s].get_metadata(MetadataType::RunContinued) { return Ok(false); }
-            } else {
-                break;
-            }
-        }  
-        Ok(true)
+    pub fn lookup(&mut self, fingerprint: u64) -> bool {
+        self.get_index(fingerprint).is_some()
     }
 
     /// Gets the fingerprint(hashed value), returns quotient and remainder
@@ -195,7 +214,7 @@ mod tests {
     fn insert_and_read_one_success() {
         let mut filter = QuotientFilter::new(5).unwrap();
         _ = filter.insert_value(&1_u8.to_be_bytes());
-        let result = filter.read_value(&1_u8.to_be_bytes()).unwrap();
+        let result = filter.read_value(&1_u8.to_be_bytes());
 
         assert!(result);
     }
@@ -206,7 +225,7 @@ mod tests {
         _ = filter.insert_value(&1_u8.to_be_bytes());
         _ = filter.insert_value(&2_u8.to_be_bytes());
         _ = filter.insert_value(&3_u8.to_be_bytes());
-        let result = filter.read_value(&2_u8.to_be_bytes()).unwrap();
+        let result = filter.read_value(&2_u8.to_be_bytes());
 
         assert!(result);
     }
@@ -215,7 +234,7 @@ mod tests {
     fn insert_and_read_one_failure() {
         let mut filter = QuotientFilter::new(5).unwrap();
         _ = filter.insert_value(&1_u8.to_be_bytes());
-        let result = filter.read_value(&2_u8.to_be_bytes()).unwrap();
+        let result = filter.read_value(&2_u8.to_be_bytes());
 
         assert!(!result);
     }
@@ -226,7 +245,7 @@ mod tests {
         _ = filter.insert_value(&1_u8.to_be_bytes());
         _ = filter.insert_value(&2_u8.to_be_bytes());
         _ = filter.insert_value(&3_u8.to_be_bytes());
-        let result = filter.read_value(&4_u8.to_be_bytes()).unwrap();
+        let result = filter.read_value(&4_u8.to_be_bytes());
         
         assert!(!result);
     }

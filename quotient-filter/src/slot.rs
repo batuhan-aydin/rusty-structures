@@ -14,12 +14,12 @@ impl Slot {
         Self { remainder: 0, metadata: 0}
     }
 
-    pub(super) fn new_with_reminder(remainder: u64) -> Self {
+    pub(super) fn new_with_remainder(remainder: u64) -> Self {
         Self { remainder, metadata: 0}
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.remainder == 0
+        self.remainder == 0 || self.get_metadata(MetadataType::Tombstone)
     }
 
     /// Get metadata info. 0 is false, 1 is true.
@@ -43,6 +43,16 @@ impl Slot {
             MetadataType::BucketOccupied => self.metadata |= 1 << 2,
             MetadataType::RunContinued => self.metadata |= 1 << 1,
             MetadataType::IsShifted => self.metadata |= 1
+        }
+    }
+
+    /// Sets the selected metadata to 0
+    pub(super) fn clear_metadata(&mut self, data: MetadataType) {
+        match data {
+            MetadataType::Tombstone => self.metadata &= !(1 << 3),
+            MetadataType::BucketOccupied => self.metadata &= !(1 << 2),
+            MetadataType::RunContinued => self.metadata &= !(1 << 1),
+            MetadataType::IsShifted => self.metadata &= !1
         }
     }
 
