@@ -3,7 +3,6 @@ use crate::QuotientFilterError;
 use super::{MetadataType, slot::Slot};
 use anyhow::{Result, Ok};
 
-
 /// The base filter struct. Size of quotient(index) and remainder(hash result's bit count - quotient)
 /// Size is how many bucket? Table is just keeping buckets.
 pub struct QuotientFilter {
@@ -40,10 +39,46 @@ impl QuotientFilter {
     }
 
     pub fn delete(&mut self, fingerprint: u64)  {
-        if let Some(index) = self.get_index(fingerprint) {
-            self.table[index].set_metadata(MetadataType::Tombstone);
-            self.table[index].clear_metadata(MetadataType::BucketOccupied);
+        let (quotient, remainder) = self.fingerprint_destruction(fingerprint).unwrap_or_default();
+
+        if quotient == usize::default() && remainder == u64::default() { return;}
+
+        if let Some(bucket) = self.table.get(quotient) {
+            if !bucket.get_metadata(MetadataType::BucketOccupied) { return;}
+        } else { return; }
+
+        let mut b = self.get_start_of_the_cluster(quotient);
+        let mut s = b;
+        while b != quotient {
+            s = self.index_up(s);
+            s = self.get_lowest_of_run(s);
+            b = self.index_up(b);
+
+            b = self.skip_empty_slots(b);
         }
+
+        // S at the start of the run. 
+        // If only its the only element in the run, then we clear bucket_occupied bit
+        let mut clear_bucket_occupied = true;
+        let mut clear_head = false;
+        let mut head_of_run_index: usize = 0;
+        while let Some(bucket) = self.table.get(s) {
+            if bucket.remainder != remainder {
+                if !clear_head { head_of_run_index = s; }
+                clear_head = true;
+                s = self.index_up(s);
+                clear_bucket_occupied = false;
+                if !self.table[s].get_metadata(MetadataType::RunContinued) { return; }
+            } else {
+                if self.table[s + 1].get_metadata(MetadataType::RunContinued) { clear_head = false; clear_bucket_occupied = false; }
+                break;
+            }
+        }  
+        
+        if clear_head { self.table[head_of_run_index].clear_metadata(MetadataType::BucketOccupied) }
+
+        self.table[s].set_metadata(MetadataType::Tombstone);
+        if clear_bucket_occupied { self.table[s].clear_metadata(MetadataType::BucketOccupied); }
     }
 
     pub fn get_index(&self, fingerprint: u64) -> Option<usize> {
@@ -248,5 +283,49 @@ mod tests {
         let result = filter.read_value(&4_u8.to_be_bytes());
         
         assert!(!result);
+    }
+
+    #[test]
+    fn delete_value_one_success() {
+        let mut filter = QuotientFilter::new(5).unwrap();
+        _ = filter.insert_value(&1_u8.to_be_bytes());
+        filter.delete_value(&1_u8.to_be_bytes());
+        let result = filter.read_value(&1_u8.to_be_bytes());
+
+        assert!(!result);
+    }
+
+    #[test]
+    fn delete_value_multiple_success() {
+        let mut filter = QuotientFilter::new(5).unwrap();
+        _ = filter.insert_value(&1_u8.to_be_bytes());
+        _ = filter.insert_value(&2_u8.to_be_bytes());
+        _ = filter.insert_value(&3_u8.to_be_bytes());
+        _ = filter.insert_value(&4_u8.to_be_bytes());
+        filter.delete_value(&2_u8.to_be_bytes());
+        let result = filter.read_value(&2_u8.to_be_bytes());
+
+        assert!(!result);
+    }
+
+    #[test]
+    fn delete_multiple_value_multiple_success() {
+        let mut filter = QuotientFilter::new(10).unwrap();
+        _ = filter.insert_value(&1_u8.to_be_bytes());
+        _ = filter.insert_value(&2_u8.to_be_bytes());
+        _ = filter.insert_value(&3_u8.to_be_bytes());
+        _ = filter.insert_value(&4_u8.to_be_bytes());
+        _ = filter.insert_value(&5_u8.to_be_bytes());
+        _ = filter.insert_value(&6_u8.to_be_bytes());
+        filter.delete_value(&2_u8.to_be_bytes());
+        filter.delete_value(&3_u8.to_be_bytes());
+        filter.delete_value(&6_u8.to_be_bytes());
+        let result1 = filter.read_value(&2_u8.to_be_bytes());
+        let result2 = filter.read_value(&3_u8.to_be_bytes());
+        let result3 = filter.read_value(&6_u8.to_be_bytes());
+
+        assert!(!result1);
+        assert!(!result2);
+        assert!(!result3);
     }
 }
