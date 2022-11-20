@@ -219,8 +219,6 @@ impl QuotientFilter {
      /// Inserts the element by using custom fingerprint and returns the index
      pub fn insert(&mut self, fingerprint: u64) -> Result<usize> {
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint)?;
-        dbg!(quotient);
-        dbg!(remainder);
         let is_quotient_occupied_before = self.table[quotient].is_occupied(); 
         // mark the appropriate as occupied
         if let Some(bucket) = self.table.get_mut(quotient) {
@@ -271,7 +269,6 @@ impl QuotientFilter {
                 while !self.table[last_run].is_run_continued() {
                     last_run = self.index_up(last_run);
                 }
-                dbg!(last_run);
                 let idx = if last_run > insert_index { insert_index + self.size } else { insert_index };
                 if idx - last_run != away_from_anchor {
                     extra_shift = true;
@@ -323,7 +320,6 @@ impl QuotientFilter {
             // here shifting is done. now we have to insert our new bucket using insert_index
             //if remove_old_run_head { new_slot.clear_metadata(MetadataType::RunContinued); }
             self.table[insert_index] = new_slot;
-            dbg!(&self.table);
             return Ok(insert_index)
 
         } 
