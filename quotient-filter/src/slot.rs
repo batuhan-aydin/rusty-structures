@@ -14,12 +14,73 @@ impl Slot {
         Self { remainder: 0, metadata: 0}
     }
 
+    pub(super) fn new_with_all(remainder: u64, metadata: u8) -> Self {
+        Self { remainder, metadata }
+    }
+
     pub(super) fn new_with_remainder(remainder: u64) -> Self {
         Self { remainder, metadata: 0}
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.remainder == 0 || self.get_metadata(MetadataType::Tombstone)
+    }
+
+    pub(super) fn get_left_most_remainder_bit(&self, remainder_size: u8) -> bool {
+        self.remainder >> (remainder_size - 1) == 1
+    }
+
+    pub(super) fn get_new_quotient(&self, old_quotient: u32, bit: bool) -> usize {
+        (old_quotient << 1 | if bit { 1 } else { 0 }) as usize
+    }
+
+    pub(super) fn get_new_remainder(&self, remainder_size: u8) -> u64 {
+        self.remainder & !(1 << remainder_size - 1)
+    }
+
+    pub(super) fn is_run_start(&self) -> bool {
+        !self.get_metadata(MetadataType::RunContinued) && 
+        (self.get_metadata(MetadataType::BucketOccupied) || self.get_metadata(MetadataType::IsShifted))
+    }
+
+    pub(super) fn is_cluster_start(&self) -> bool {
+        self.get_metadata(MetadataType::BucketOccupied) 
+        && !self.get_metadata(MetadataType::RunContinued)
+        && !self.get_metadata(MetadataType::IsShifted)
+    }
+
+    pub(super) fn is_occupied(&self) -> bool {
+        self.metadata >> 2 == 1
+    }
+
+    pub(super) fn is_run_continued(&self) -> bool {
+        (self.metadata >> 1) & 1 == 1
+    }
+
+    pub(super) fn is_shifted(&self) -> bool {
+        self.metadata & 1 == 1
+    }
+
+    pub(super) fn get_new_slot(&self, old_index: usize, remainder_size: u8, size: usize) -> (usize, Slot) {
+        let left_remainder_bit = self.get_left_most_remainder_bit(remainder_size);
+        let mut new_index = self.get_new_quotient(old_index as u32, left_remainder_bit);
+        let new_remainder = self.get_new_remainder(remainder_size);
+        let mut new_slot = Slot::new_with_remainder(new_remainder);
+
+        if self.get_metadata(MetadataType::BucketOccupied) {
+            new_slot.set_metadata(MetadataType::BucketOccupied);
+        }
+
+        if self.get_metadata(MetadataType::RunContinued) { 
+            new_slot.set_metadata(MetadataType::RunContinued);
+        }
+
+        if self.get_metadata(MetadataType::IsShifted) {
+            new_index = if new_index == 0 { size - 1 } else { new_index - 1 };
+            new_slot.set_metadata(MetadataType::IsShifted);
+        }
+
+        (new_index, new_slot)
     }
 
     /// Get metadata info. 0 is false, 1 is true.
@@ -30,7 +91,7 @@ impl Slot {
             MetadataType::Tombstone => self.metadata >> 3,
             MetadataType::BucketOccupied => self.metadata >> 2,
             MetadataType::RunContinued => (self.metadata >> 1) & 1,
-            MetadataType::IsShifted => self.metadata & 6
+            MetadataType::IsShifted => self.metadata & 1
         };
 
         result == 1
