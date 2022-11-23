@@ -26,6 +26,13 @@ impl Slot {
         self.remainder == 0 || self.get_metadata(MetadataType::Tombstone)
     }
 
+    pub(super) fn reconstruct_fingerprint_64(&self, quotient: usize, remainder_size: u8) -> u64 {
+        let quotient = quotient as u64;
+        let new_value = quotient;
+        let bit_mask = quotient << remainder_size;
+        (self.remainder &  !(bit_mask)) | (new_value << remainder_size)
+    }
+
     pub(super) fn get_left_most_remainder_bit(&self, remainder_size: u8) -> bool {
         self.remainder >> (remainder_size - 1) == 1
     }

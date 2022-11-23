@@ -22,7 +22,9 @@ enum QuotientFilterError {
     #[error("Quotient cannot be more than 62 due to 64 bit hashing")]
     InvalidQuotientSize,
     #[error("Filters need to have the same size for merging")]
-    NotEqualSize
+    NotEqualSize,
+    #[error("Not able to find the quotient to insert")]
+    NotAbleToFindOccupied
 }
 
 #[derive(Default)]
@@ -49,6 +51,7 @@ enum Position {
 }
 
 pub struct QuotientFilter {
+    count: u64,
     remainder: u8,
     size: usize,
     table: Vec<Slot>  
@@ -61,6 +64,7 @@ impl QuotientFilter {
         let remainder = 64 - quotient_size;
         
         Ok(Self {
+            count: 0,
             remainder,
             size,
             table: vec![Slot::new(); size]
@@ -74,7 +78,7 @@ impl QuotientFilter {
     }
 
     /// Reads byte-value using fnv1a
-    pub fn read_value(&mut self, value: &[u8]) -> bool {
+    pub fn lookup_value(&mut self, value: &[u8]) -> bool {
         let fingerprint =  const_fnv1a_hash::fnv1a_hash_64(value, None);
         self.lookup(fingerprint)
     }
@@ -88,28 +92,56 @@ impl QuotientFilter {
     /// Doubles the size of the table
     // We have to get its fingerprint back then insert again
     // TODO
-    fn resize(&mut self) {
+    pub fn resize(&mut self) -> anyhow::Result<()>{
+        // do cluster by cluster. 
+        let mut is_first = false;
+        let mut first_anchor = usize::default();
         let mut index: usize = 0;
-        let mut old_table = std::mem::replace(&mut self.table, vec![Slot::new(); self.size * 2]);
-        while let Some(bucket) = old_table.get_mut(index) {
-            if !bucket.is_empty() {
-                let mut fingerprint: u64 = 0;
-                if bucket.get_metadata(MetadataType::RunContinued) {
-                    let mut run_head_idx = index - 1;
-                    while let Some(bucket) = old_table.get_mut(run_head_idx) {
-                        if !bucket.get_metadata(MetadataType::RunContinued) { break; }
-                        else { run_head_idx = self.index_down(run_head_idx); }
-                    }
+        let mut fingerprints: Vec<u64> = Vec::with_capacity(self.count as usize);
+        while let Some(anchor_idx) = self.get_next_anchor(index) {
+            if anchor_idx == first_anchor { break; }
+            if !is_first { first_anchor = anchor_idx; is_first = true; }
+            let mut quotient_cache = anchor_idx;
+            let mut slot_idx = anchor_idx;
+            // an anchor's fingerprint is just its quotient and its remainder side by side
+            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint_64(anchor_idx, self.remainder);
+        
+            fingerprints.push(fingerprint);
+            slot_idx = self.index_up(slot_idx);
+            while !self.table[slot_idx].is_empty() {
+                while self.table[slot_idx].is_run_continued() {
+                    fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                    fingerprints.push(fingerprint);
+                    slot_idx = self.index_up(slot_idx);
                 }
-                //let (new_index, new_slot) = bucket.get_new_slot(index, self.remainder, self.size);
-                //new_table[new_index as usize] = new_slot;            
+                if !self.table[slot_idx].is_empty() {
+                    quotient_cache = self.get_next_occupied(quotient_cache).ok_or(anyhow::Error::new(QuotientFilterError::NotAbleToFindOccupied))?;
+                    if self.table[slot_idx].is_run_start() {
+                        fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                        fingerprints.push(fingerprint);
+                        slot_idx = self.index_up(slot_idx);
+                      }
+                } else {
+                    break;
+                }
             }
-            index = self.index_up(index);
-            if index == 0 { break; }
+            index = anchor_idx;
+        } 
+
+        let mut old_table = std::mem::replace(&mut self.table, vec![Slot::new(); self.size * 2]);
+        self.size *= 2;
+        self.remainder -= 1;
+
+        for fingerprint in fingerprints {
+            // If any error happens during insertion, we're taking back everything
+            if let Err(e) = self.insert(fingerprint) {
+                std::mem::swap(&mut self.table, &mut old_table);
+                self.size /= 2;
+                self.remainder += 1;
+                return Err(e);
+            }
         }
-        //self.size *= 2;
-        //self.remainder -= 1;
-        //self.table = new_table;
+        Ok(())
     }
 
     /// Merges a second filter into original one and doubles its original size. They have to have the same size.
@@ -205,7 +237,7 @@ impl QuotientFilter {
                 clear_bucket_occupied = false;
                 if !self.table[s].get_metadata(MetadataType::RunContinued) { return; }
             } else {
-                if self.table[s + 1].get_metadata(MetadataType::RunContinued) { clear_head = false; clear_bucket_occupied = false; }
+                if self.table[self.index_up(s)].get_metadata(MetadataType::RunContinued) { clear_head = false; clear_bucket_occupied = false; }
                 break;
             }
         }  
@@ -213,6 +245,7 @@ impl QuotientFilter {
         if clear_head { self.table[head_of_run_index].clear_metadata(MetadataType::BucketOccupied) }
 
         self.table[s].set_metadata(MetadataType::Tombstone);
+        self.count -= 1;
         if clear_bucket_occupied { self.table[s].clear_metadata(MetadataType::BucketOccupied); }
     }
 
@@ -226,7 +259,8 @@ impl QuotientFilter {
             // if selected is empty, we can set and return
             if bucket.is_empty() {
                 bucket.clear_metadata(MetadataType::Tombstone);
-                bucket.set_remainder(remainder);               
+                bucket.set_remainder(remainder);    
+                self.count += 1;           
                 return Ok(quotient);
             }
 
@@ -318,8 +352,8 @@ impl QuotientFilter {
             }
 
             // here shifting is done. now we have to insert our new bucket using insert_index
-            //if remove_old_run_head { new_slot.clear_metadata(MetadataType::RunContinued); }
             self.table[insert_index] = new_slot;
+            self.count += 1;
             return Ok(insert_index)
 
         } 
@@ -400,6 +434,25 @@ impl QuotientFilter {
         index
     }
 
+    fn get_next_anchor(&self, index: usize) -> Option<usize> {
+        for i in index..self.size {
+            if self.table[i].is_cluster_start() { return Some(i); }
+        }
+        None
+    }
+
+    fn get_next_occupied(&self, cache: usize) -> Option<usize> {
+        let mut index = self.index_up(cache);
+        while let Some(slot) = self.table.get(index) {
+            // if looped and returned back to old cache, it shouldn't happen, error
+            if index == cache { return None; }
+            // we loop until we find next occupied slot
+            else if slot.is_occupied() { return Some(index); }
+            else { index = self.index_up(cache); }
+        }
+        None
+    }
+
     #[inline(always)]
     fn index_up(&self, old_index: usize) -> usize {
         (old_index + 1) % (self.size)
@@ -408,12 +461,6 @@ impl QuotientFilter {
     #[inline(always)]
     fn index_down(&self, old_index: usize) -> usize {
         if old_index == 0 { return self.size - 1; }
-        old_index - 1
-    }
-
-    #[inline(always)]
-    fn idx_down(size: usize, old_index: usize) -> usize {
-        if old_index == 0 { return size - 1; }
         old_index - 1
     }
 
@@ -506,7 +553,7 @@ mod tests {
     fn insert_and_read_one_success() {
         let mut filter = QuotientFilter::new(5).unwrap();
         _ = filter.insert_value(&1_u8.to_be_bytes());
-        let result = filter.read_value(&1_u8.to_be_bytes());
+        let result = filter.lookup_value(&1_u8.to_be_bytes());
 
         assert!(result);
     }
@@ -517,7 +564,7 @@ mod tests {
         _ = filter.insert_value(&1_u8.to_be_bytes());
         _ = filter.insert_value(&2_u8.to_be_bytes());
         _ = filter.insert_value(&3_u8.to_be_bytes());
-        let result = filter.read_value(&2_u8.to_be_bytes());
+        let result = filter.lookup_value(&2_u8.to_be_bytes());
 
         assert!(result);
     }
@@ -526,7 +573,7 @@ mod tests {
     fn insert_and_read_one_failure() {
         let mut filter = QuotientFilter::new(5).unwrap();
         _ = filter.insert_value(&1_u8.to_be_bytes());
-        let result = filter.read_value(&2_u8.to_be_bytes());
+        let result = filter.lookup_value(&2_u8.to_be_bytes());
 
         assert!(!result);
     }
@@ -537,7 +584,7 @@ mod tests {
         _ = filter.insert_value(&1_u8.to_be_bytes());
         _ = filter.insert_value(&2_u8.to_be_bytes());
         _ = filter.insert_value(&3_u8.to_be_bytes());
-        let result = filter.read_value(&4_u8.to_be_bytes());
+        let result = filter.lookup_value(&4_u8.to_be_bytes());
         
         assert!(!result);
     }
@@ -547,7 +594,7 @@ mod tests {
         let mut filter = QuotientFilter::new(5).unwrap();
         _ = filter.insert_value(&1_u8.to_be_bytes());
         filter.delete_value(&1_u8.to_be_bytes());
-        let result = filter.read_value(&1_u8.to_be_bytes());
+        let result = filter.lookup_value(&1_u8.to_be_bytes());
 
         assert!(!result);
     }
@@ -560,7 +607,7 @@ mod tests {
         _ = filter.insert_value(&3_u8.to_be_bytes());
         _ = filter.insert_value(&4_u8.to_be_bytes());
         filter.delete_value(&2_u8.to_be_bytes());
-        let result = filter.read_value(&2_u8.to_be_bytes());
+        let result = filter.lookup_value(&2_u8.to_be_bytes());
 
         assert!(!result);
     }
@@ -577,12 +624,45 @@ mod tests {
         filter.delete_value(&2_u8.to_be_bytes());
         filter.delete_value(&3_u8.to_be_bytes());
         filter.delete_value(&6_u8.to_be_bytes());
-        let result1 = filter.read_value(&2_u8.to_be_bytes());
-        let result2 = filter.read_value(&3_u8.to_be_bytes());
-        let result3 = filter.read_value(&6_u8.to_be_bytes());
+        let result1 = filter.lookup_value(&2_u8.to_be_bytes());
+        let result2 = filter.lookup_value(&3_u8.to_be_bytes());
+        let result3 = filter.lookup_value(&6_u8.to_be_bytes());
 
         assert!(!result1);
         assert!(!result2);
         assert!(!result3);
     }
+
+    #[test]
+    fn resize_one_element() {
+        let mut filter = QuotientFilter::new(2).unwrap();
+        // its fingerprint start as 101, so first 10(2), after resize 101(5)
+        _ = filter.insert_value(&1_u8.to_be_bytes());
+        _ = filter.resize();
+        assert!(!filter.table[5].is_empty());
+        assert!(filter.table[5].is_cluster_start());
+    }
+
+    #[test]
+    fn resize_two_different_quotient_element() {
+        let mut filter = QuotientFilter::new(2).unwrap();
+        // its fingerprint start as 101, so first 10(2), after resize 101(5)
+        _ = filter.insert_value(&1_u8.to_be_bytes());
+        // 110
+        _ = filter.insert_value(&567889965_u64.to_be_bytes()).unwrap(); // 3
+        _ = filter.resize();
+        assert!(!filter.table[5].is_empty());
+        assert!(filter.table[5].is_cluster_start());
+        assert!(!filter.table[6].is_empty());
+        assert!(filter.table[6].is_cluster_start());
+    }
+
+    #[test]
+    fn read_after_resize_one_element() {
+        let mut filter = QuotientFilter::new(2).unwrap();
+        _ = filter.insert_value(&1_u8.to_be_bytes());
+        _ = filter.resize();
+        assert!(filter.lookup_value(&1_u8.to_be_bytes()));
+    }
+    
 }
