@@ -1,50 +1,25 @@
 use std::collections::BTreeMap;
 
-use slot::Slot;
-use thiserror::Error;
+use crate::{QuotientFilterError, MetadataType};
+
+use super::slot::Slot;
 use anyhow::{Result, Ok};
-
-pub mod slot;
-pub mod extra;
-
-/// Tombstone: Is the particular bucket has a deleted element? TODO: implement
-/// BucketOccupied: Any hash result with the particular quotient?
-/// RunContinued: Is the particular bucket has the same quotient with the upper one?
-/// IsShifted: Is the particular bucket in its original bucket?
-enum MetadataType {
-    Tombstone,
-    BucketOccupied,
-    RunContinued,
-    IsShifted
-}
-
-#[derive(Error, Debug)]
-enum QuotientFilterError {
-    #[error("Invalid quotient access: `{0}`")]
-    InvalidQuotientAccess(usize),
-    #[error("Quotient cannot be more than 62 due to 64 bit hashing")]
-    InvalidQuotientSize,
-    #[error("Filters need to have the same size for merging")]
-    NotEqualSize,
-    #[error("Not able to find the quotient to insert")]
-    NotAbleToFindOccupied,
-}
 
 pub struct QuotientFilter {
     count: usize,
     remainder: u8,
     size: usize,
-    table: Vec<Slot>  
+    pub table: Vec<Slot>  
 }
 
 impl QuotientFilter {
     /// Creates a new filter.
     /// Quotient size defines the size, ex. quotient_size = 2, size of table is 2^2 = 4
-    /// And 64 - 2 = 62 rest of the bits will be used for remainder
+    /// And 32 - 2 = 30 rest of the bits will be used for remainder
     pub fn new(quotient_size: u8) -> Result<Self> {
-        if quotient_size > 62 { return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize)); }
+        if quotient_size > 30 { return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize)); }
         let size = usize::pow(2, quotient_size as u32);
-        let remainder = 64 - quotient_size;
+        let remainder = 32 - quotient_size;
         
         Ok(Self {
             count: 0,
@@ -54,27 +29,27 @@ impl QuotientFilter {
         })
     }
 
-    /// Inserts byte-value using fnv1a 
+    /// Inserts byte-value using murmur3 
     pub fn insert_value(&mut self, value: &[u8]) -> Result<usize> {
-        let fingerprint =  const_fnv1a_hash::fnv1a_hash_64(value, None);
+        let fingerprint =  const_murmur3::murmur3_32(value, 2023);
         self.insert(fingerprint)
     }
 
-    /// Reads byte-value using fnv1a
+    /// Reads byte-value using murmur3
     pub fn lookup_value(&mut self, value: &[u8]) -> bool {
-        let fingerprint =  const_fnv1a_hash::fnv1a_hash_64(value, None);
+        let fingerprint =  const_murmur3::murmur3_32(value, 2023); 
         self.lookup(fingerprint)
     }
 
-    /// Deleted byte-value using fnv1a
+    /// Deleted byte-value using murmur3
     pub fn delete_value(&mut self, value: &[u8]) {
-        let fingerprint =  const_fnv1a_hash::fnv1a_hash_64(value, None);
+        let fingerprint =  const_murmur3::murmur3_32(value, 2023);
         self.delete(fingerprint);
     }
 
     /// How much space are we spending
     pub fn space(&self) -> u64 {
-        u64::pow(2, 64 - self.remainder as u32) * (self.remainder as u64 + 8)
+        u64::pow(2, 32 - self.remainder as u32) * (self.remainder as u64 + 8)
     }
 
     /// Doubles the size of the table
@@ -84,27 +59,27 @@ impl QuotientFilter {
         let mut is_first = false;
         let mut first_anchor = usize::default();
         let mut index: usize = 0;
-        let mut fingerprints: Vec<u64> = Vec::with_capacity(self.count as usize);
+        let mut fingerprints: Vec<u32> = Vec::with_capacity(self.count as usize);
         while let Some(anchor_idx) = self.get_next_anchor(index) {
             if anchor_idx == first_anchor { break; }
             if !is_first { first_anchor = anchor_idx; is_first = true; }
             let mut quotient_cache = anchor_idx;
             let mut slot_idx = anchor_idx;
             // an anchor's fingerprint is just its quotient and its remainder side by side
-            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint_64(anchor_idx, self.remainder);
+            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint(anchor_idx, self.remainder);
         
             fingerprints.push(fingerprint);
             slot_idx = self.index_up(slot_idx);
             while !self.table[slot_idx].is_empty() {
                 while self.table[slot_idx].is_run_continued() {
-                    fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                    fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder);
                     fingerprints.push(fingerprint);
                     slot_idx = self.index_up(slot_idx);
                 }
                 if !self.table[slot_idx].is_empty() {
                     quotient_cache = self.get_next_occupied(quotient_cache).ok_or(anyhow::Error::new(QuotientFilterError::NotAbleToFindOccupied))?;
                     if self.table[slot_idx].is_run_start() {
-                        fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                        fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder);
                         fingerprints.push(fingerprint);
                         slot_idx = self.index_up(slot_idx);
                       }
@@ -169,14 +144,14 @@ impl QuotientFilter {
     }
 
     /// Returns if the element exists, by using custom fingerprint
-    pub fn lookup(&mut self, fingerprint: u64) -> bool {
+    pub fn lookup(&mut self, fingerprint: u32) -> bool {
         self.get_index(fingerprint).is_some()
     }
 
-    pub fn delete(&mut self, fingerprint: u64)  {
+    pub fn delete(&mut self, fingerprint: u32)  {
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint).unwrap_or_default();
 
-        if quotient == usize::default() && remainder == u64::default() { return;}
+        if quotient == usize::default() && remainder == u32::default() { return;}
 
         if let Some(bucket) = self.table.get(quotient) {
             if !bucket.get_metadata(MetadataType::BucketOccupied) { return;}
@@ -218,9 +193,11 @@ impl QuotientFilter {
     }
 
      /// Inserts the element by using custom fingerprint and returns the index
-     pub fn insert(&mut self, fingerprint: u64) -> Result<usize> {
+     pub fn insert(&mut self, fingerprint: u32) -> Result<usize> {
         if self.size - self.count as usize - 1 == 0 { self.resize()?; }
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint)?;
+        dbg!(quotient);
+        dbg!(remainder);
         let is_quotient_occupied_before = self.table[quotient].is_occupied(); 
         // mark the appropriate as occupied
         if let Some(bucket) = self.table.get_mut(quotient) {
@@ -330,17 +307,15 @@ impl QuotientFilter {
             // here shifting is done. now we have to insert our new bucket using insert_index
             self.table[insert_index] = new_slot;
             self.count += 1;
-            dbg!(&self.table);
             return Ok(insert_index)
-
         } 
 
         Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientAccess(quotient)))
     }
 
-    pub fn get_index(&self, fingerprint: u64) -> Option<usize> {
+    pub fn get_index(&self, fingerprint: u32) -> Option<usize> {
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint).unwrap_or_default();
-        if quotient == usize::default() && remainder == u64::default() { return None; }
+        if quotient == usize::default() && remainder == u32::default() { return None; }
 
         // The buckets are quotient-indexed. Remember, we have number of 2^quotient buckets.
         if let Some(bucket) = self.table.get(quotient) {
@@ -377,9 +352,9 @@ impl QuotientFilter {
     }
 
     /// Gets the fingerprint(hashed value), returns quotient and remainder
-    fn fingerprint_destruction(&self, fingerprint: u64) -> Result<(usize, u64)> {
-        let quotient = fingerprint / u64::pow(2, self.remainder as u32);
-        let remainder = fingerprint % u64::pow(2, self.remainder as u32);       
+    fn fingerprint_destruction(&self, fingerprint: u32) -> Result<(usize, u32)> {
+        let quotient = fingerprint / u32::pow(2, self.remainder as u32);
+        let remainder = fingerprint % u32::pow(2, self.remainder as u32);       
         let quotient_usize = usize::try_from(quotient)?;
         Ok((quotient_usize, remainder))
     }
@@ -431,13 +406,13 @@ impl QuotientFilter {
     }
 
     /// Collects map of quotient and collection of fingerprints
-    fn collect_fingerprint_map(&self) -> Result<BTreeMap<usize, Vec<u64>>> {
-        let mut map: BTreeMap<usize, Vec<u64>> = BTreeMap::new();
+    fn collect_fingerprint_map(&self) -> Result<BTreeMap<usize, Vec<u32>>> {
+        let mut map: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
         let mut is_first = false;
         let mut first_anchor = usize::default();
         let mut index: usize = 0;
 
-        let mut insertion = |index: usize, fingerprint: u64| {
+        let mut insertion = |index: usize, fingerprint: u32| {
             if let Some(value) = map.get_mut(&index) { value.push(fingerprint); } else { map.insert(index, vec![fingerprint]); }
         };
 
@@ -447,19 +422,19 @@ impl QuotientFilter {
             let mut quotient_cache = anchor_idx;
             let mut slot_idx = anchor_idx;
             // an anchor's fingerprint is just its quotient and its remainder side by side
-            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint_64(anchor_idx, self.remainder);
+            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint(anchor_idx, self.remainder);
             insertion(quotient_cache, fingerprint);
             slot_idx = self.index_up(slot_idx);
             while !self.table[slot_idx].is_empty() {
                 while self.table[slot_idx].is_run_continued() {
-                    fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                    fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder);
                     insertion(quotient_cache, fingerprint);
                     slot_idx = self.index_up(slot_idx);
                 }
                 if !self.table[slot_idx].is_empty() {
                     quotient_cache = self.get_next_occupied(quotient_cache).ok_or(anyhow::Error::new(QuotientFilterError::NotAbleToFindOccupied))?;
                     if self.table[slot_idx].is_run_start() {
-                        fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                        fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder);
                         insertion(quotient_cache, fingerprint);
                         slot_idx = self.index_up(slot_idx);
                       }
@@ -492,84 +467,6 @@ impl QuotientFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn insert_one() {
-        let mut filter = QuotientFilter::new(2).unwrap();
-        let idx = filter.insert_value(&1_u8.to_be_bytes()).unwrap();  // 1_u8's quotient is 2
-        assert_eq!(idx, 2);
-        assert!(filter.table[2].is_run_start());
-        assert!(filter.table[2].is_cluster_start());
-    }
-
-    #[test]
-    fn insert_two_same_quotient() {
-        let mut filter = QuotientFilter::new(2).unwrap();
-        let idx1 = filter.insert_value(&1_u8.to_be_bytes()).unwrap();  // 1_u8's quotient is 2
-        let idx2 = filter.insert_value(&2_u8.to_be_bytes()).unwrap();  // 2_u8's quotient is 2
-        assert_eq!(idx1, 2);
-        assert_eq!(idx2, 3);
-        assert!(!filter.table[3].is_occupied()); 
-        assert!(filter.table[3].is_run_continued());
-        assert!(filter.table[3].is_shifted());
-    }
-
-    #[test]
-    fn insert_second_run_on_different_quotient() {
-        let mut filter = QuotientFilter::new(2).unwrap();
-        let idx1 = filter.insert_value(&1_u8.to_be_bytes()).unwrap();  // 1_u8's quotient is 2
-        let idx2 = filter.insert_value(&2_u8.to_be_bytes()).unwrap();  // 2_u8's quotient is 2
-        let idx3 = filter.insert_value(&567889965_u64.to_be_bytes()).unwrap(); // quotient is 3
-        assert_eq!(idx1, 2);
-        assert_eq!(idx2, 3);
-        assert_eq!(idx3, 0);
-        assert!(!filter.table[0].is_occupied()); 
-        assert!(!filter.table[0].is_run_continued());
-        assert!(filter.table[0].is_shifted());
-    }
-
-    // This was an edge case. The whole extra shift is added for this case.
-    #[test]
-    fn insert_multiple_runs_different_quotients_sequentially() {
-        let mut filter = QuotientFilter::new(3).unwrap();
-        let idx1 = filter.insert_value(&1_u8.to_be_bytes()).unwrap(); // 5
-        let idx2 = filter.insert_value(&2_u8.to_be_bytes()).unwrap(); // 5
-        let idx3 = filter.insert_value(&3_u8.to_be_bytes()).unwrap(); // 5
-        let idx4 = filter.insert_value(&75324433_u32.to_be_bytes()).unwrap(); // 7
-        let idx5 = filter.insert_value(&75324434_u32.to_be_bytes()).unwrap(); // 7
-        let idx6 = filter.insert_value(&567889965_u64.to_be_bytes()).unwrap(); // 6
-
-        assert_eq!(idx1, 5);
-        assert_eq!(idx2, 6);
-        assert_eq!(idx3, 6); // has a smaller remainder
-        assert_eq!(idx4, 0);
-        assert_eq!(idx5, 0); // has a smaller remainder
-        assert_eq!(idx6, 0); // after extra shift, becomes the 0 cause it's quotient is closer to anchor
-
-        assert!(!filter.table[0].is_occupied());
-        assert!(!filter.table[0].is_run_continued());
-        assert!(filter.table[0].is_shifted()); // 0 0 1
-
-        assert!(!filter.table[1].is_occupied());
-        assert!(!filter.table[1].is_run_continued());
-        assert!(filter.table[1].is_shifted()); // 0 0 1
-
-        assert!(!filter.table[2].is_occupied());
-        assert!(filter.table[2].is_run_continued());
-        assert!(filter.table[2].is_shifted()); // 0 1 1
-
-        assert!(filter.table[5].is_occupied());
-        assert!(!filter.table[5].is_run_continued());
-        assert!(!filter.table[5].is_shifted()); // 1 0 0
-
-        assert!(filter.table[6].is_occupied());
-        assert!(filter.table[6].is_run_continued());
-        assert!(filter.table[6].is_shifted()); // 1 1 1
-
-        assert!(filter.table[7].is_occupied());
-        assert!(filter.table[7].is_run_continued());
-        assert!(filter.table[7].is_shifted()); // 1 1 1
-    }
 
     #[test]
     fn insert_and_read_one_success() {
@@ -653,30 +550,6 @@ mod tests {
         assert!(!result1);
         assert!(!result2);
         assert!(!result3);
-    }
-
-    #[test]
-    fn resize_one_element() {
-        let mut filter = QuotientFilter::new(2).unwrap();
-        // its fingerprint start as 101, so first 10(2), after resize 101(5)
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        _ = filter.resize();
-        assert!(!filter.table[5].is_empty());
-        assert!(filter.table[5].is_cluster_start());
-    }
-
-    #[test]
-    fn resize_two_different_quotient_element() {
-        let mut filter = QuotientFilter::new(2).unwrap();
-        // its fingerprint start as 101, so first 10(2), after resize 101(5)
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        // 110
-        _ = filter.insert_value(&567889965_u64.to_be_bytes()).unwrap(); // 3
-        _ = filter.resize();
-        assert!(!filter.table[5].is_empty());
-        assert!(filter.table[5].is_cluster_start());
-        assert!(!filter.table[6].is_empty());
-        assert!(filter.table[6].is_cluster_start());
     }
 
     #[test]

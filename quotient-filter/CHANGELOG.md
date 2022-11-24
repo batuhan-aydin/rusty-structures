@@ -1,8 +1,7 @@
-# Planned
+# 0.1.2 (November 24, 2022)
 
-- Merging operation
-- Support for 32 bit fingerprint
-- Thread safe quotient filter
+- While shifting the head of run, there was problem about metadata. It got fixed.
+- 32 bit version is added under extra.
 
 # 0.1.1 (November 24, 2022)
 

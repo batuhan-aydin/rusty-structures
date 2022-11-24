@@ -1,11 +1,11 @@
-use super::MetadataType;
+use crate::MetadataType;
 
 /// Slot keeps remainder(what's left from quotient), and 4 bits metadata.
 /// Metadata bits are, Tombstone, bucket_occupied, run_continued and is_shifted
 /// However, we can't use anything smaller than a byte, so we'll use a byte and waste 4 bits.
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct Slot {
-    pub(super) remainder: u64,
+pub struct Slot {
+    pub(super) remainder: u32,
     metadata: u8
 }
 
@@ -14,7 +14,7 @@ impl Slot {
         Self { remainder: 0, metadata: 0}
     }
 
-    pub(super) fn new_with_remainder(remainder: u64) -> Self {
+    pub(super) fn new_with_remainder(remainder: u32) -> Self {
         Self { remainder, metadata: 0}
     }
 
@@ -22,8 +22,8 @@ impl Slot {
         self.remainder == 0 || self.get_metadata(MetadataType::Tombstone)
     }
 
-    pub(super) fn reconstruct_fingerprint_64(&self, quotient: usize, remainder_size: u8) -> u64 {
-        let quotient = quotient as u64;
+    pub(super) fn reconstruct_fingerprint(&self, quotient: usize, remainder_size: u8) -> u32 {
+        let quotient = quotient as u32;
         let new_value = quotient;
         let bit_mask = quotient << remainder_size;
         (self.remainder &  !(bit_mask)) | (new_value << remainder_size)
@@ -85,7 +85,7 @@ impl Slot {
         }
     }
 
-    pub(super) fn set_remainder(&mut self, remainder: u64) {
+    pub(super) fn set_remainder(&mut self, remainder: u32) {
         self.remainder = remainder;
     }
 }
