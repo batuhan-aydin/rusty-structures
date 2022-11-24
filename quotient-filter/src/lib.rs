@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use slot::Slot;
 use thiserror::Error;
 use anyhow::{Result, Ok};
@@ -25,29 +27,6 @@ enum QuotientFilterError {
     NotEqualSize,
     #[error("Not able to find the quotient to insert")]
     NotAbleToFindOccupied
-}
-
-#[derive(Default)]
-struct ResizeHandler {
-    index_up: ResizeOption,
-    insert: ResizeOption,
-    position: Position
-}
-
-#[derive(Default, PartialEq)]
-enum ResizeOption {
-    #[default]
-    None,
-    Original,
-    Other,
-    Both
-}
-
-#[derive(Default, PartialEq)]
-enum Position {
-    Equal,
-    #[default]
-    Different
 }
 
 pub struct QuotientFilter {
@@ -91,7 +70,6 @@ impl QuotientFilter {
 
     /// Doubles the size of the table
     // We have to get its fingerprint back then insert again
-    // TODO
     pub fn resize(&mut self) -> anyhow::Result<()>{
         // do cluster by cluster. 
         let mut is_first = false;
@@ -145,58 +123,37 @@ impl QuotientFilter {
     }
 
     /// Merges a second filter into original one and doubles its original size. They have to have the same size.
-    // TODO
-    fn merge(&mut self, other: &QuotientFilter) -> Result<()> {
+    pub fn merge(&mut self, other: &QuotientFilter) -> Result<()> {
         if self.size != other.size { return Err(anyhow::Error::new(QuotientFilterError::NotEqualSize)); }
-        let mut new_table = vec![Slot::new(); self.size * 2];
-        let mut resize_handler = ResizeHandler::default();
-        let mut i = 0;
-        let mut j = 0;
-        while i < self.size && j < self.size {
-            if self.table[i].is_empty() && other.table[j].is_empty() { 
-                resize_handler.index_up = ResizeOption::Both;
-            }
-            else if self.table[i].is_empty() { 
-                resize_handler.index_up = ResizeOption::Both;
-                resize_handler.insert = ResizeOption::Other;
-            } else if other.table[j].is_empty() {
-                resize_handler.insert = ResizeOption::Original;
-                resize_handler.index_up = ResizeOption::Both;
-            } else {
-                if self.table[i].remainder == self.table[j].remainder {
-                    resize_handler.insert = ResizeOption::Original;
-                    resize_handler.index_up = ResizeOption::Both;
-                } else if self.table[i].remainder < self.table[j].remainder {
-                    resize_handler.insert = ResizeOption::Original;
-                    resize_handler.index_up = ResizeOption::Original;
-                } else {
-                    resize_handler.insert = ResizeOption::Other; 
-                    resize_handler.index_up = ResizeOption::Other;
-                }
-            }
 
-            resize_handler.position = if i == j { Position::Equal } else { Position::Different };
-
-            if resize_handler.insert == ResizeOption::Original {
-                let (new_index, new_slot) = self.table[i].get_new_slot(i, self.remainder, self.size);
-                new_table[new_index] = new_slot; 
-            } else if resize_handler.insert == ResizeOption::Other {
-                let (new_index, new_slot) = other.table[j].get_new_slot(j, other.remainder, other.size);
-                new_table[new_index] = new_slot; 
-            }
-
-            match resize_handler.index_up {
-                ResizeOption::Original => i += 1,
-                ResizeOption::Other => j += 1,
-                ResizeOption::Both => { i += 1; j += 1; }
-                ResizeOption::None => continue
-            }
+        // Collect all quotient and corresponding fingerprints
+        let mut map_1 = self.collect_fingerprint_map()?;
+        let mut map_2 = other.collect_fingerprint_map()?;
+        for (index, fingerprints) in &mut map_1 {
+            if let Some(value) = map_2.get_mut(index) {
+                fingerprints.append(value);
+                fingerprints.sort_unstable();
+              }
         }
-        
+        for (index, fingerprints) in map_2 {
+            if fingerprints.len() > 0 { map_1.insert(index, fingerprints); }
+        }
+
+        // Resize
+        let mut old_table = std::mem::replace(&mut self.table, vec![Slot::new(); self.size * 2]);
         self.size *= 2;
         self.remainder -= 1;
-        self.table = new_table;
 
+        for (_, fingerprints) in map_1 {
+            for fingerprint in fingerprints {
+                if let Err(e) = self.insert(fingerprint) {
+                    std::mem::swap(&mut self.table, &mut old_table);
+                    self.size /= 2;
+                    self.remainder += 1;
+                    return Err(e);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -451,6 +408,51 @@ impl QuotientFilter {
             else { index = self.index_up(cache); }
         }
         None
+    }
+
+    /// Collects map of quotient and collection of fingerprints
+    fn collect_fingerprint_map(&self) -> Result<BTreeMap<usize, Vec<u64>>> {
+        let mut map: BTreeMap<usize, Vec<u64>> = BTreeMap::new();
+        let mut is_first = false;
+        let mut first_anchor = usize::default();
+        let mut index: usize = 0;
+
+        let mut insertion = |index: usize, fingerprint: u64| {
+            if let Some(value) = map.get_mut(&index) { value.push(fingerprint); } else { map.insert(index, vec![fingerprint]); }
+        };
+
+        while let Some(anchor_idx) = self.get_next_anchor(index) {
+            if anchor_idx == first_anchor { break; }
+            if !is_first { first_anchor = anchor_idx; is_first = true; }
+            let mut quotient_cache = anchor_idx;
+            let mut slot_idx = anchor_idx;
+            // an anchor's fingerprint is just its quotient and its remainder side by side
+            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint_64(anchor_idx, self.remainder);
+            insertion(quotient_cache, fingerprint);
+            slot_idx = self.index_up(slot_idx);
+            while !self.table[slot_idx].is_empty() {
+                while self.table[slot_idx].is_run_continued() {
+                    fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                    insertion(quotient_cache, fingerprint);
+                    slot_idx = self.index_up(slot_idx);
+                }
+                if !self.table[slot_idx].is_empty() {
+                    quotient_cache = self.get_next_occupied(quotient_cache).ok_or(anyhow::Error::new(QuotientFilterError::NotAbleToFindOccupied))?;
+                    if self.table[slot_idx].is_run_start() {
+                        fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                        insertion(quotient_cache, fingerprint);
+                        slot_idx = self.index_up(slot_idx);
+                      }
+                } else {
+                    break;
+                }
+            }
+            index = anchor_idx;
+        } 
+        for value in map.iter_mut() {
+            value.1.sort_unstable();
+        }
+        Ok(map)
     }
 
     #[inline(always)]
