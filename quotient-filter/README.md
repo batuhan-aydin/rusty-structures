@@ -9,8 +9,6 @@ To use this crate, simply add the following string to your `Cargo.toml`:
 quotient-filter = "0.1.1"
 ```
 
-Do not use right now. Expect to have breaking changes.
-
 
 ```rust
     let mut filter = QuotientFilter::new(5).unwrap();
@@ -21,8 +19,4 @@ Do not use right now. Expect to have breaking changes.
     let idx2 = filter.insert(your_hash_result);
 ```
 
-Currently supports, insertion, deletion and read.
-
-TODO:
-- Resizing and merging operations
-- Thread safe version
+Currently supports, insertion, deletion, lookup and resizing.
