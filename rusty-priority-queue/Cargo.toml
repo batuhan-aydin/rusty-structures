@@ -1,0 +1,17 @@
+[package]
+name = "rusty-priority-queue"
+version = "0.1.0"
+edition = "2021"
+authors = ["Batuhan Aydın <batuhanaydin501@gmail.com>"]
+description = "A priority queue implementation."
+repository = "https://github.com/batuhan-aydin/rusty-structures/tree/main/rusty-priority-queue"
+documentation = "https://docs.rs/rusty-priority-queue"
+readme = "README.md"
+keywords = ["priority", "queue"]
+categories = ["data-structures", "algorithms"]
+license = "MIT"
+license-file = "LICENSE"
+
+[dependencies]
+anyhow = "^1.0.66"
+thiserror = "^1.0.37"
