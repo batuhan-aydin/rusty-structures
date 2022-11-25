@@ -91,20 +91,20 @@ impl QuotientFilter {
             let mut quotient_cache = anchor_idx;
             let mut slot_idx = anchor_idx;
             // an anchor's fingerprint is just its quotient and its remainder side by side
-            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint_64(anchor_idx, self.remainder);
+            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint(anchor_idx, self.remainder);
         
             fingerprints.push(fingerprint);
             slot_idx = self.index_up(slot_idx);
             while !self.table[slot_idx].is_empty() {
                 while self.table[slot_idx].is_run_continued() {
-                    fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                    fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder);
                     fingerprints.push(fingerprint);
                     slot_idx = self.index_up(slot_idx);
                 }
                 if !self.table[slot_idx].is_empty() {
                     quotient_cache = self.get_next_occupied(quotient_cache).ok_or(anyhow::Error::new(QuotientFilterError::NotAbleToFindOccupied))?;
                     if self.table[slot_idx].is_run_start() {
-                        fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                        fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder);
                         fingerprints.push(fingerprint);
                         slot_idx = self.index_up(slot_idx);
                       }
@@ -447,19 +447,19 @@ impl QuotientFilter {
             let mut quotient_cache = anchor_idx;
             let mut slot_idx = anchor_idx;
             // an anchor's fingerprint is just its quotient and its remainder side by side
-            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint_64(anchor_idx, self.remainder);
+            let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint(anchor_idx, self.remainder);
             insertion(quotient_cache, fingerprint);
             slot_idx = self.index_up(slot_idx);
             while !self.table[slot_idx].is_empty() {
                 while self.table[slot_idx].is_run_continued() {
-                    fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                    fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder);
                     insertion(quotient_cache, fingerprint);
                     slot_idx = self.index_up(slot_idx);
                 }
                 if !self.table[slot_idx].is_empty() {
                     quotient_cache = self.get_next_occupied(quotient_cache).ok_or(anyhow::Error::new(QuotientFilterError::NotAbleToFindOccupied))?;
                     if self.table[slot_idx].is_run_start() {
-                        fingerprint = self.table[slot_idx].reconstruct_fingerprint_64(quotient_cache, self.remainder);
+                        fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder);
                         insertion(quotient_cache, fingerprint);
                         slot_idx = self.index_up(slot_idx);
                       }

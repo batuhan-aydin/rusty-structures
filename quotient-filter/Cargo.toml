@@ -1,6 +1,6 @@
 [package]
 name = "quotient-filter"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Batuhan Aydın <batuhanaydin501@gmail.com>"]
 description = "A quotient filter implementation."

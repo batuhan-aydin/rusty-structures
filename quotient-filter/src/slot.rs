@@ -22,7 +22,7 @@ impl Slot {
         self.remainder == 0 || self.get_metadata(MetadataType::Tombstone)
     }
 
-    pub(super) fn reconstruct_fingerprint_64(&self, quotient: usize, remainder_size: u8) -> u64 {
+    pub(super) fn reconstruct_fingerprint(&self, quotient: usize, remainder_size: u8) -> u64 {
         let quotient = quotient as u64;
         let new_value = quotient;
         let bit_mask = quotient << remainder_size;

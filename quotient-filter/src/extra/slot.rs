@@ -4,7 +4,7 @@ use crate::MetadataType;
 /// Metadata bits are, Tombstone, bucket_occupied, run_continued and is_shifted
 /// However, we can't use anything smaller than a byte, so we'll use a byte and waste 4 bits.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Slot {
+pub(crate) struct Slot {
     pub(super) remainder: u32,
     metadata: u8
 }

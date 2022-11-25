@@ -6,7 +6,7 @@ An implemantation of quotient filter. Based on the book named [Algorithms and Da
 
 To use this crate, simply add the following string to your `Cargo.toml`:
 ```
-quotient-filter = "0.1.2"
+quotient-filter = "0.1.3"
 ```
 
 ```rust
