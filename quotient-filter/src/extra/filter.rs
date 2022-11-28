@@ -196,8 +196,6 @@ impl QuotientFilter {
      pub fn insert(&mut self, fingerprint: u32) -> Result<usize> {
         if self.size - self.count as usize - 1 == 0 { self.resize()?; }
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint)?;
-        dbg!(quotient);
-        dbg!(remainder);
         let is_quotient_occupied_before = self.table[quotient].is_occupied(); 
         // mark the appropriate as occupied
         if let Some(bucket) = self.table.get_mut(quotient) {

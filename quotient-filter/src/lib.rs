@@ -6,6 +6,7 @@ use anyhow::{Result, Ok};
 
 pub mod slot;
 pub mod extra;
+pub mod generic;
 
 /// Tombstone: Is the particular bucket has a deleted element? TODO: implement
 /// BucketOccupied: Any hash result with the particular quotient?
@@ -19,7 +20,7 @@ enum MetadataType {
 }
 
 #[derive(Error, Debug)]
-enum QuotientFilterError {
+pub(crate) enum QuotientFilterError {
     #[error("Invalid quotient access: `{0}`")]
     InvalidQuotientAccess(usize),
     #[error("Quotient cannot be more than 62 due to 64 bit hashing")]
@@ -28,6 +29,8 @@ enum QuotientFilterError {
     NotEqualSize,
     #[error("Not able to find the quotient to insert")]
     NotAbleToFindOccupied,
+    #[error("Converting error")]
+    ConvertingError
 }
 
 pub struct QuotientFilter {
@@ -330,7 +333,7 @@ impl QuotientFilter {
             // here shifting is done. now we have to insert our new bucket using insert_index
             self.table[insert_index] = new_slot;
             self.count += 1;
-            dbg!(&self.table);
+
             return Ok(insert_index)
 
         } 

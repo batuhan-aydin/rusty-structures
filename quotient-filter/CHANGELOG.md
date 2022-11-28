@@ -1,3 +1,7 @@
+# 0.2.0 (November 25, 2022)
+
+- Generic version is implemented
+
 # 0.1.3 (November 25, 2022)
 
 - Cleaning and privacy update
