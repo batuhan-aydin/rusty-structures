@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::QuotientFilterError;
 use anyhow::Result;
 use num_traits::{Unsigned, Zero, PrimInt, One};
-use super::slot::{Bucket, is_occupied, is_cluster_start, is_run_continued, is_shifted, is_empty, is_run_start, MetadataType};
+use super::slot::{Bucket, MetadataType};
 
 pub struct QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usize> {
     count: usize,
@@ -58,15 +58,15 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
         
             fingerprints.push(fingerprint);
             slot_idx = self.index_up(slot_idx);
-            while !is_empty::<T>(self.table[slot_idx].get_remainder(), self.table[slot_idx].get_metadata()) {
-                while is_run_continued(self.table[slot_idx].get_metadata()) {
+            while !self.table[slot_idx].is_empty() {
+                while self.table[slot_idx].is_run_continued() {
                     fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder_size)?;
                     fingerprints.push(fingerprint);
                     slot_idx = self.index_up(slot_idx);
                 }
-                if !is_empty::<T>(self.table[slot_idx].get_remainder(), self.table[slot_idx].get_metadata()) {
+                if !self.table[slot_idx].is_empty() {
                     quotient_cache = self.get_next_occupied(quotient_cache).ok_or(anyhow::Error::new(QuotientFilterError::NotAbleToFindOccupied))?;
-                    if is_run_start(self.table[slot_idx].get_metadata()) {
+                    if self.table[slot_idx].is_run_start() {
                         fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder_size)?;
                         fingerprints.push(fingerprint);
                         slot_idx = self.index_up(slot_idx);
@@ -137,7 +137,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
         if quotient == usize::default() && remainder == T::default() { return;}
 
         if let Some(bucket) = self.table.get(quotient) {
-            if !is_occupied(bucket.get_metadata()) { return;}
+            if !bucket.is_occupied() { return;}
         } else { return; }
 
         let mut b = self.get_start_of_the_cluster(quotient);
@@ -161,9 +161,9 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
                 clear_head = true;
                 s = self.index_up(s);
                 clear_bucket_occupied = false;
-                if !is_run_continued(self.table[s].get_metadata()) { return; }
+                if !self.table[s].is_run_continued() { return; }
             } else {
-                if is_run_continued(self.table[self.index_up(s)].get_metadata()){ clear_head = false; clear_bucket_occupied = false; }
+                if self.table[self.index_up(s)].is_run_continued(){ clear_head = false; clear_bucket_occupied = false; }
                 break;
             }
         }  
@@ -180,12 +180,12 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
     pub fn insert(&mut self, fingerprint: T) -> Result<usize> {
     //if self.table_size - self.count as usize - 1 == 0 { self.resize()?; }
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint)?;
-        let is_quotient_occupied_before = is_occupied(self.table[quotient].get_metadata()); 
+        let is_quotient_occupied_before = self.table[quotient].is_occupied(); 
         // mark the appropriate as occupied
         if let Some(bucket) = self.table.get_mut(quotient) {
             bucket.set_metadata(MetadataType::BucketOccupied);
             // if selected is empty, we can set and return
-            if is_empty::<T>(bucket.get_remainder(), bucket.get_metadata()) {
+            if bucket.is_empty() {
                 bucket.clear_metadata(MetadataType::Tombstone);
                 bucket.set_remainder(remainder);    
                 self.count += 1;           
@@ -210,7 +210,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
     
             if !is_quotient_occupied_before { 
                 loop {
-                    if !is_empty::<T>(self.table[s].get_remainder(), self.table[s].get_metadata()) { 
+                    if !self.table[s].is_empty() { 
                         s = self.index_up(s) 
                     } else { break; }
                 }
@@ -218,9 +218,9 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
                 
             // Find the insert spot
             // s is here at the start of the run, if first of its run, first empty slot
-            let is_part_of_existing_run = !is_empty::<T>(self.table[s].get_remainder(), self.table[s].get_metadata());
+            let is_part_of_existing_run = !self.table[s].is_empty();
             while let Some(bucket) = self.table.get(s) {
-                if !is_empty(bucket.get_remainder(), bucket.get_metadata()) 
+                if !bucket.is_empty() 
                 && remainder > bucket.get_remainder() { s  = self.index_up(s) }
                 else {  break; }
             }
@@ -231,7 +231,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
             // then extra_shift = true and insert_index = last_run - away_from_anchor
             if !is_quotient_occupied_before {
                 let mut last_run = self.index_up(quotient);
-                while !is_run_continued(self.table[last_run].get_metadata()) {
+                while !self.table[last_run].is_run_continued() {
                     last_run = self.index_up(last_run);
                 }
                 let idx = if last_run > insert_index { insert_index + self.table_size } else { insert_index };
@@ -250,16 +250,16 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
             // however we shouldn't shift bucket_occupied bits
             let mut tmp_bucket = Bucket::default();
             while let Some(bucket) = self.table.get_mut(s) {
-                if is_empty::<T>(bucket.get_remainder(), bucket.get_metadata()) { break; }
-                if is_occupied(tmp_bucket.get_metadata()) { tmp_bucket.set_metadata(MetadataType::BucketOccupied); }
+                if bucket.is_empty() { break; }
+                if tmp_bucket.is_occupied() { tmp_bucket.set_metadata(MetadataType::BucketOccupied); }
                 tmp_bucket = std::mem::replace(bucket, tmp_bucket);
                 tmp_bucket.set_metadata(MetadataType::IsShifted);
     
                 // if new slot is part of run, and pushing old slot, old slot is also runcontinued
                 if is_part_of_existing_run { 
                     // If we are taking place of run start
-                    if is_run_start(tmp_bucket.get_metadata()) { 
-                        if is_occupied(tmp_bucket.get_metadata()) { 
+                    if tmp_bucket.is_run_start() { 
+                        if tmp_bucket.is_occupied() { 
                             new_slot.set_metadata(MetadataType::BucketOccupied); 
                             tmp_bucket.clear_metadata(MetadataType::BucketOccupied);
                         }
@@ -268,7 +268,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
                     tmp_bucket.set_metadata(MetadataType::RunContinued);
                 }
                 s = self.index_up(s);
-                if is_empty::<T>(self.table[s].get_remainder(), self.table[s].get_metadata()) {
+                if self.table[s].is_empty() {
                     self.table[s] = tmp_bucket;
                     break;
                 }
@@ -278,11 +278,11 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
                 let mut tmp_bucket = Bucket::default();
                 let mut shift_index = insert_index;
                 while let Some(bucket) = self.table.get_mut(shift_index) {
-                    if is_empty::<T>(bucket.get_remainder(), bucket.get_metadata()) { break; }
+                    if bucket.is_empty() { break; }
                     tmp_bucket = std::mem::replace(bucket, tmp_bucket);
                     tmp_bucket.set_metadata(MetadataType::IsShifted);
                     shift_index = self.index_up(shift_index);
-                    if is_empty::<T>(self.table[shift_index].get_remainder(), self.table[shift_index].get_metadata()) {
+                    if self.table[shift_index].is_empty() {
                         self.table[shift_index] = tmp_bucket;
                         break;
                     }
@@ -306,7 +306,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
 
         // The buckets are quotient-indexed. Remember, we have number of 2^quotient buckets.
         if let Some(bucket) = self.table.get(quotient) {
-            if !is_occupied(bucket.get_metadata()) { return None; }
+            if !bucket.is_occupied() { return None; }
         } else { return None; }
 
          // Going to start of the cluster. Cluster is one or more runs.
@@ -330,7 +330,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
         while let Some(bucket) = self.table.get(s) {
             if bucket.get_remainder() != remainder {
                 s = self.index_up(s);
-                if !is_run_continued(self.table[s].get_metadata()){ return None; }
+                if !self.table[s].is_run_continued(){ return None; }
             } else {
                 break;
             }
@@ -359,15 +359,15 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
             let mut fingerprint = self.table[anchor_idx].reconstruct_fingerprint(anchor_idx, self.remainder_size)?;
             insertion(quotient_cache, fingerprint);
             slot_idx = self.index_up(slot_idx);
-            while !is_empty::<T>(self.table[slot_idx].get_remainder(), self.table[slot_idx].get_metadata()) {
-                while is_run_continued(self.table[slot_idx].get_metadata()) {
+            while !self.table[slot_idx].is_empty() {
+                while self.table[slot_idx].is_run_continued() {
                     fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder_size)?;
                     insertion(quotient_cache, fingerprint);
                     slot_idx = self.index_up(slot_idx);
                 }
-                if !is_empty::<T>(self.table[slot_idx].get_remainder(), self.table[slot_idx].get_metadata()) {
+                if !self.table[slot_idx].is_empty() {
                     quotient_cache = self.get_next_occupied(quotient_cache).ok_or(anyhow::Error::new(QuotientFilterError::NotAbleToFindOccupied))?;
-                    if is_run_start(self.table[slot_idx].get_metadata()) {
+                    if self.table[slot_idx].is_run_start() {
                         fingerprint = self.table[slot_idx].reconstruct_fingerprint(quotient_cache, self.remainder_size)?;
                         insertion(quotient_cache, fingerprint);
                         slot_idx = self.index_up(slot_idx);
@@ -396,7 +396,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
     fn get_start_of_the_cluster(&self, start_index: usize) -> usize {
         let mut index = start_index;
         while let Some(slot) = self.table.get(index) {
-            if is_shifted(slot.get_metadata()) { index = self.index_down(index); }
+            if slot.is_shifted() { index = self.index_down(index); }
             else { break; }
         }
         index
@@ -405,7 +405,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
     fn get_lowest_of_run(&self, start_index: usize) -> usize {
         let mut index = start_index;
         while let Some(slot) = self.table.get(index) {
-            if is_run_continued(slot.get_metadata()) { index = self.index_up(index) }
+            if slot.is_run_continued() { index = self.index_up(index) }
             else { break; }
         }
         index
@@ -414,7 +414,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
     fn skip_empty_slots(&self, start_index: usize) -> usize {
         let mut index = start_index;
         while let Some(bucket) = self.table.get(index) {
-            if !is_occupied(bucket.get_metadata()) { index = self.index_up(index) }
+            if !bucket.is_occupied() { index = self.index_up(index) }
             else { break; }
         }
         index
@@ -422,7 +422,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
 
     fn get_next_anchor(&self, index: usize) -> Option<usize> {
         for i in index..self.table_size {
-            if is_cluster_start(self.table[i].get_metadata()) { return Some(i); }
+            if self.table[i].is_cluster_start() { return Some(i); }
         }
         None
     }
@@ -433,11 +433,11 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
             // if looped and returned back to old cache, it shouldn't happen, error
             if index == cache { return None; }
             // we loop until we find next occupied slot
-            else if is_occupied(slot.get_metadata()) { return Some(index); }
+            else if slot.is_occupied() { return Some(index); }
             else { index = self.index_up(cache); }
         }
         None
-    }
+    } 
 
     #[inline(always)]
     fn index_up(&self, old_index: usize) -> usize {

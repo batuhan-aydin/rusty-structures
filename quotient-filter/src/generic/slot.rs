@@ -12,39 +12,6 @@ pub(crate) enum MetadataType {
 
 type Metadata = u8;
 
-pub(super) fn is_run_continued(metadata: Metadata) -> bool {
-    (metadata >> 1) & Metadata::one() == Metadata::one()
-}
-
-pub(super) fn is_shifted(metadata: Metadata) -> bool {
-    metadata & Metadata::one() == Metadata::one()
-}
-
-pub(super) fn is_occupied(metadata: Metadata) -> bool {
-    metadata >> 2 == Metadata::one()
-}
-
-pub(super) fn is_tombstone(metadata: Metadata) -> bool {
-    (metadata >> 3) == Metadata::one()
-}
-
-pub(super) fn is_empty<T>(remainder: T, metadata: Metadata) -> bool 
-where T : Unsigned + Zero + One + PrimInt
-{
-    remainder.is_zero() || super::slot::is_tombstone(metadata)
-}
-
-pub(super) fn is_run_start(metadata: Metadata) -> bool {
-    !super::slot::is_run_continued(metadata) && 
-    (super::slot::is_occupied(metadata)|| super::slot::is_shifted(metadata))
-}
-
-pub(super) fn is_cluster_start(metadata: Metadata) -> bool {
-    super::slot::is_occupied(metadata)
-    && !super::slot::is_run_continued(metadata)
-    && !super::slot::is_shifted(metadata)
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Bucket<T> where T : Unsigned + Zero + One + PrimInt + TryFrom<usize> {
     remainder: T,
@@ -92,8 +59,35 @@ impl<T> Bucket<T> where T : Unsigned + Zero + One + PrimInt + TryFrom<usize> {
         }
     }
 
-    pub(super) fn get_metadata(&self) -> Metadata {
-        return self.metadata
+    pub(super) fn is_run_continued(&self) -> bool {
+        (self.metadata >> 1) & Metadata::one() == Metadata::one()
+    }
+    
+    pub(super) fn is_shifted(&self) -> bool {
+        self.metadata & Metadata::one() == Metadata::one()
+    }
+    
+    pub(super) fn is_occupied(&self) -> bool {
+        self.metadata >> 2 == Metadata::one()
+    }
+    
+    pub(super) fn is_tombstone(&self) -> bool {
+        (self.metadata >> 3) == Metadata::one()
+    }
+    
+    pub(super) fn is_empty(&self) -> bool {
+        self.remainder.is_zero() || self.is_tombstone()
+    }
+    
+    pub(super) fn is_run_start(&self) -> bool {
+        !self.is_run_continued() && 
+        (self.is_occupied()|| self.is_shifted())
+    }
+    
+    pub(super) fn is_cluster_start(&self) -> bool {
+        self.is_occupied()
+        && !self.is_run_continued()
+        && !self.is_shifted()
     }
 
     pub(super) fn get_remainder(&self) -> T {
