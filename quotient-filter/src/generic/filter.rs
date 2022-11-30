@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap};
 
 use crate::QuotientFilterError;
 use anyhow::Result;
@@ -11,7 +11,6 @@ pub struct QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<
     table_size: usize,
     table: Vec<Bucket<T>>  
 }
-
 
 impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usize> + Default, usize: TryFrom<T>{
     pub fn new(quotient_size: u8) -> Result<Self> {
@@ -384,12 +383,12 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
         Ok(map)
     }
 
-
     /// Gets the fingerprint(hashed value), returns quotient and remainder
     fn fingerprint_destruction(&self, fingerprint: T) -> Result<(usize, T)> {
-        let quotient = fingerprint / T::pow(<T as TryFrom<usize>>::try_from(2_usize).map_err(|_| anyhow::Error::new(QuotientFilterError::ConvertingError)).unwrap(), self.remainder_size as u32);
-        let remainder = fingerprint % T::pow(<T as TryFrom<usize>>::try_from(2_usize).map_err(|_| anyhow::Error::new(QuotientFilterError::ConvertingError)).unwrap(), self.remainder_size as u32);       
-        let quotient_usize = usize::try_from(quotient).map_err(|_| anyhow::Error::new(QuotientFilterError::ConvertingError)).unwrap();
+        let two = <T as TryFrom<usize>>::try_from(2_usize).map_err(|_| anyhow::Error::new(QuotientFilterError::ConvertingError))?;
+        let quotient = fingerprint / T::pow(two, self.remainder_size as u32);
+        let remainder = fingerprint % T::pow(two, self.remainder_size as u32);       
+        let quotient_usize = usize::try_from(quotient).map_err(|_| anyhow::Error::new(QuotientFilterError::ConvertingError))?;
         Ok((quotient_usize, remainder))
     }
 

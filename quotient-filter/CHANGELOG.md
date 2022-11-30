@@ -1,4 +1,8 @@
-# 0.2.0 (November 25, 2022)
+# 0.2.1 (November 30, 2022)
+
+- Refactor around generic module
+
+# 0.2.0 (November 28, 2022)
 
 - Generic version is implemented
 

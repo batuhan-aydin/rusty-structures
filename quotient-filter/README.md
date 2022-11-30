@@ -6,7 +6,7 @@ An implemantation of quotient filter. Based on the book named [Algorithms and Da
 
 To use this crate, simply add the following string to your `Cargo.toml`:
 ```
-quotient-filter = "0.2.0"
+quotient-filter = "0.2.1"
 ```
 
 ```rust
@@ -24,5 +24,5 @@ quotient-filter = "0.2.0"
 
 Supports insertion, deletion, lookup, merging and resizing.
 
-The generic version exists under the generic module. It was first implemented for u64, then mostly copy pasted u32 version under extra module. To avoid of copy-paste, the generic version is created but decided not to delete old ones. It supports u64, u32, u16 and u8.
+The generic version exists under the generic module. It was first implemented for u64, then mostly copy pasted u32 version under extra module. To avoid of copy-paste, the generic version has been created but with a few more checks. It supports u64, u32, u16 and u8 fingerprints.
 
