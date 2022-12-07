@@ -9,21 +9,22 @@ pub struct QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<
     count: usize,
     remainder_size: u8,
     table_size: usize,
-    table: Vec<Bucket<T>>  
+    table: Vec<Bucket<T>>
+}
+
+#[derive(Debug, Copy, Clone)]
+enum HashSize {
+    U8,
+    U16,
+    U32,
+    U64
 }
 
 impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usize> + Default, usize: TryFrom<T>{
     pub fn new(quotient_size: u8) -> Result<Self> {
-        let hash_size = std::mem::size_of::<T>();
-        match hash_size {
-            1 => if quotient_size > 7 {return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize))},
-            2 => if quotient_size > 15 {return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize))},
-            4 => if quotient_size > 31 {return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize))},
-            8 => if quotient_size > 61 {return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize))} 
-            _ => return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize))
-        }
+        let hash_size = QuotientFilter::get_hash_size(quotient_size)?;
         let table_size = usize::pow(2, quotient_size as u32);
-        let remainder_size = 64 - quotient_size;
+        let remainder_size = QuotientFilter::get_remainder_size(quotient_size, hash_size);
         
         Ok(Self {
             count: 0,
@@ -173,7 +174,6 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
         self.count -= 1;
         if clear_bucket_occupied { self.table[s].clear_metadata(MetadataType::BucketOccupied); }
     }
-
 
     /// Inserts the element by using custom fingerprint and returns the index
     pub fn insert(&mut self, fingerprint: T) -> Result<usize> {
@@ -437,6 +437,25 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
         }
         None
     } 
+
+    fn get_hash_size(quotient_size: u8) -> Result<HashSize> {
+        match std::mem::size_of::<T>() {
+            1 => if quotient_size > 7 { return Ok(HashSize::U8) } else { return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize)) },
+            2 => if quotient_size > 15 { return Ok(HashSize::U16) } else { return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize)) },
+            4 => if quotient_size > 31 { return Ok(HashSize::U32) } else { return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize)) },
+            8 => if quotient_size > 61 { return Ok(HashSize::U64) } else { return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize)) },
+            _ => Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize))
+        }
+    }
+
+    fn get_remainder_size(quotient_size: u8, hash_size: HashSize) -> u8 {
+        match hash_size {
+            HashSize::U8 => 8 - quotient_size,
+            HashSize::U16 => 16 - quotient_size,
+            HashSize::U32 => 32 - quotient_size,
+            HashSize::U64 => 64 - quotient_size
+        }
+    }
 
     #[inline(always)]
     fn index_up(&self, old_index: usize) -> usize {
