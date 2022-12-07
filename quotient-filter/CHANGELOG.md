@@ -1,3 +1,9 @@
+# 0.2.2 (December 07, 2022)
+
+- u16 version is included
+- u32 version is updated
+- The data structure is better explained in readme
+
 # 0.2.1 (November 30, 2022)
 
 - Refactor around generic module

@@ -2,24 +2,24 @@ use std::collections::BTreeMap;
 
 use crate::{QuotientFilterError, MetadataType};
 
-use super::slot::Slot;
+use super::slot16::Slot;
 use anyhow::{Result, Ok};
 
-pub struct QuotientFilter {
+pub struct QuotientFilter16 {
     count: usize,
     remainder: u8,
     size: usize,
     table: Vec<Slot>  
 }
 
-impl QuotientFilter {
+impl QuotientFilter16 {
     /// Creates a new filter.
     /// Quotient size defines the size, ex. quotient_size = 2, size of table is 2^2 = 4
     /// And 32 - 2 = 30 rest of the bits will be used for remainder
     pub fn new(quotient_size: u8) -> Result<Self> {
-        if quotient_size > 30 { return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize)); }
+        if quotient_size > 15 { return Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientSize)); }
         let size = usize::pow(2, quotient_size as u32);
-        let remainder = 32 - quotient_size;
+        let remainder = 16 - quotient_size;
         
         Ok(Self {
             count: 0,
@@ -32,24 +32,24 @@ impl QuotientFilter {
     /// Inserts byte-value using murmur3 
     pub fn insert_value(&mut self, value: &[u8]) -> Result<usize> {
         let fingerprint =  const_murmur3::murmur3_32(value, 2023);
-        self.insert(fingerprint)
+        self.insert(fingerprint as u16)
     }
-
+    
     /// Reads byte-value using murmur3
     pub fn lookup_value(&mut self, value: &[u8]) -> bool {
         let fingerprint =  const_murmur3::murmur3_32(value, 2023); 
-        self.lookup(fingerprint)
+        self.lookup(fingerprint as u16)
     }
-
+    
     /// Deleted byte-value using murmur3
     pub fn delete_value(&mut self, value: &[u8]) {
         let fingerprint =  const_murmur3::murmur3_32(value, 2023);
-        self.delete(fingerprint);
+        self.delete(fingerprint as u16);
     }
 
     /// How much space are we spending
     pub fn space(&self) -> u64 {
-        u64::pow(2, 32 - self.remainder as u32) * (self.remainder as u64 + 8)
+        u64::pow(2, 16 - self.remainder as u32) * (self.remainder as u64 + 8)
     }
 
     /// Doubles the size of the table
@@ -59,7 +59,7 @@ impl QuotientFilter {
         let mut is_first = false;
         let mut first_anchor = usize::default();
         let mut index: usize = 0;
-        let mut fingerprints: Vec<u32> = Vec::with_capacity(self.count as usize);
+        let mut fingerprints: Vec<u16> = Vec::with_capacity(self.count as usize);
         while let Some(anchor_idx) = self.get_next_anchor(index) {
             if anchor_idx == first_anchor { break; }
             if !is_first { first_anchor = anchor_idx; is_first = true; }
@@ -108,7 +108,7 @@ impl QuotientFilter {
     }
 
     /// Merges a second filter into original one and doubles its original size. They have to have the same size.
-    pub fn merge(&mut self, other: &QuotientFilter) -> Result<()> {
+    pub fn merge(&mut self, other: &QuotientFilter16) -> Result<()> {
         if self.size != other.size { return Err(anyhow::Error::new(QuotientFilterError::NotEqualSize)); }
 
         // Collect all quotient and corresponding fingerprints
@@ -144,14 +144,14 @@ impl QuotientFilter {
     }
 
     /// Returns if the element exists, by using custom fingerprint
-    pub fn lookup(&mut self, fingerprint: u32) -> bool {
+    pub fn lookup(&mut self, fingerprint: u16) -> bool {
         self.get_index(fingerprint).is_some()
     }
 
-    pub fn delete(&mut self, fingerprint: u32)  {
+    pub fn delete(&mut self, fingerprint: u16)  {
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint).unwrap_or_default();
 
-        if quotient == usize::default() && remainder == u32::default() { return;}
+        if quotient == usize::default() && remainder == u16::default() { return;}
 
         if let Some(bucket) = self.table.get(quotient) {
             if !bucket.get_metadata(MetadataType::BucketOccupied) { return;}
@@ -193,7 +193,7 @@ impl QuotientFilter {
     }
 
      /// Inserts the element by using custom fingerprint and returns the index
-     pub fn insert(&mut self, fingerprint: u32) -> Result<usize> {
+     pub fn insert(&mut self, fingerprint: u16) -> Result<usize> {
         if self.size - self.count as usize - 1 == 0 { self.resize()?; }
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint)?;
         let is_quotient_occupied_before = self.table[quotient].is_occupied(); 
@@ -311,9 +311,9 @@ impl QuotientFilter {
         Err(anyhow::Error::new(QuotientFilterError::InvalidQuotientAccess(quotient)))
     }
 
-    pub fn get_index(&self, fingerprint: u32) -> Option<usize> {
+    pub fn get_index(&self, fingerprint: u16) -> Option<usize> {
         let (quotient, remainder) = self.fingerprint_destruction(fingerprint).unwrap_or_default();
-        if quotient == usize::default() && remainder == u32::default() { return None; }
+        if quotient == usize::default() && remainder == u16::default() { return None; }
 
         // The buckets are quotient-indexed. Remember, we have number of 2^quotient buckets.
         if let Some(bucket) = self.table.get(quotient) {
@@ -350,9 +350,9 @@ impl QuotientFilter {
     }
 
     /// Gets the fingerprint(hashed value), returns quotient and remainder
-    fn fingerprint_destruction(&self, fingerprint: u32) -> Result<(usize, u32)> {
-        let quotient = fingerprint / u32::pow(2, self.remainder as u32);
-        let remainder = fingerprint % u32::pow(2, self.remainder as u32);       
+    fn fingerprint_destruction(&self, fingerprint: u16) -> Result<(usize, u16)> {
+        let quotient = fingerprint / u16::pow(2, self.remainder as u32);
+        let remainder = fingerprint % u16::pow(2, self.remainder as u32);       
         let quotient_usize = usize::try_from(quotient)?;
         Ok((quotient_usize, remainder))
     }
@@ -404,13 +404,13 @@ impl QuotientFilter {
     }
 
     /// Collects map of quotient and collection of fingerprints
-    fn collect_fingerprint_map(&self) -> Result<BTreeMap<usize, Vec<u32>>> {
-        let mut map: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
+    fn collect_fingerprint_map(&self) -> Result<BTreeMap<usize, Vec<u16>>> {
+        let mut map: BTreeMap<usize, Vec<u16>> = BTreeMap::new();
         let mut is_first = false;
         let mut first_anchor = usize::default();
         let mut index: usize = 0;
 
-        let mut insertion = |index: usize, fingerprint: u32| {
+        let mut insertion = |index: usize, fingerprint: u16| {
             if let Some(value) = map.get_mut(&index) { value.push(fingerprint); } else { map.insert(index, vec![fingerprint]); }
         };
 
@@ -459,103 +459,4 @@ impl QuotientFilter {
         old_index - 1
     }
 
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn insert_and_read_one_success() {
-        let mut filter = QuotientFilter::new(5).unwrap();
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        let result = filter.lookup_value(&1_u8.to_be_bytes());
-
-        assert!(result);
-    }
-
-    #[test]
-    fn insert_and_read_multiple_success() {
-        let mut filter = QuotientFilter::new(5).unwrap();
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        _ = filter.insert_value(&2_u8.to_be_bytes());
-        _ = filter.insert_value(&3_u8.to_be_bytes());
-        let result = filter.lookup_value(&2_u8.to_be_bytes());
-
-        assert!(result);
-    }
-
-    #[test]
-    fn insert_and_read_one_failure() {
-        let mut filter = QuotientFilter::new(5).unwrap();
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        let result = filter.lookup_value(&2_u8.to_be_bytes());
-
-        assert!(!result);
-    }
-
-    #[test]
-    fn insert_and_read_multiple_failure() {
-        let mut filter = QuotientFilter::new(5).unwrap();
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        _ = filter.insert_value(&2_u8.to_be_bytes());
-        _ = filter.insert_value(&3_u8.to_be_bytes());
-        let result = filter.lookup_value(&4_u8.to_be_bytes());
-        
-        assert!(!result);
-    }
-
-    #[test]
-    fn delete_read_one_success() {
-        let mut filter = QuotientFilter::new(5).unwrap();
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        filter.delete_value(&1_u8.to_be_bytes());
-        let result = filter.lookup_value(&1_u8.to_be_bytes());
-
-        assert!(!result);
-    }
-
-    #[test]
-    fn delete_read_multiple_success() {
-        let mut filter = QuotientFilter::new(5).unwrap();
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        _ = filter.insert_value(&2_u8.to_be_bytes());
-        _ = filter.insert_value(&3_u8.to_be_bytes());
-        _ = filter.insert_value(&4_u8.to_be_bytes());
-        filter.delete_value(&2_u8.to_be_bytes());
-        let result = filter.lookup_value(&2_u8.to_be_bytes());
-
-        assert!(!result);
-    }
-
-    #[test]
-    fn delete_read_multiple_value_multiple_success() {
-        let mut filter = QuotientFilter::new(10).unwrap();
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        _ = filter.insert_value(&2_u8.to_be_bytes());
-        _ = filter.insert_value(&3_u8.to_be_bytes());
-        _ = filter.insert_value(&4_u8.to_be_bytes());
-        _ = filter.insert_value(&5_u8.to_be_bytes());
-        _ = filter.insert_value(&6_u8.to_be_bytes());
-        filter.delete_value(&2_u8.to_be_bytes());
-        filter.delete_value(&3_u8.to_be_bytes());
-        filter.delete_value(&6_u8.to_be_bytes());
-        let result1 = filter.lookup_value(&2_u8.to_be_bytes());
-        let result2 = filter.lookup_value(&3_u8.to_be_bytes());
-        let result3 = filter.lookup_value(&6_u8.to_be_bytes());
-
-        assert!(!result1);
-        assert!(!result2);
-        assert!(!result3);
-    }
-
-    #[test]
-    fn read_after_resize_one_element() {
-        let mut filter = QuotientFilter::new(2).unwrap();
-        _ = filter.insert_value(&1_u8.to_be_bytes());
-        _ = filter.resize();
-        assert!(filter.lookup_value(&1_u8.to_be_bytes()));
-    }
-    
 }
