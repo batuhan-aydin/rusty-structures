@@ -6,6 +6,7 @@ use num_traits::{Unsigned, Zero, PrimInt, One};
 use super::slot::{Bucket, MetadataType};
 
 pub struct QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usize> {
+    hash_size: HashSize,
     count: usize,
     remainder_size: u8,
     table_size: usize,
@@ -27,6 +28,7 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
         let remainder_size = QuotientFilter::get_remainder_size(quotient_size, hash_size);
         
         Ok(Self {
+            hash_size,
             count: 0,
             remainder_size,
             table_size,
@@ -35,9 +37,13 @@ impl<T> QuotientFilter<T> where T: Unsigned + Zero + One + PrimInt + TryFrom<usi
     }
 
     /// How much space are we spending
-    pub fn space(&self) -> T {
-        T::pow(<T as TryFrom<usize>>::try_from(2_usize).map_err(|_| anyhow::Error::new(QuotientFilterError::ConvertingError)).unwrap(), 
-        64 - self.remainder_size as u32) * <T as TryFrom<usize>>::try_from(self.remainder_size as usize + 8).map_err(|_| anyhow::Error::new(QuotientFilterError::ConvertingError)).unwrap()
+    pub fn space(&self) -> u64 {
+        match self.hash_size {
+            HashSize::U8 => self.table_size as u64 * 16,
+            HashSize::U16 => self.table_size as u64 * 24,
+            HashSize::U32 => self.table_size as u64 * 40,
+            HashSize::U64 => self.table_size as u64 * 72
+        }
     }
 
     /// Doubles the size of the table

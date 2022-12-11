@@ -77,7 +77,7 @@ impl QuotientFilter {
 
     /// How much space are we spending
     pub fn space(&self) -> u64 {
-        u64::pow(2, 64 - self.remainder as u32) * (self.remainder as u64 + 8)
+        self.size as u64 * 72
     }
 
     /// Doubles the size of the table
