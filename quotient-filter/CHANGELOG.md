@@ -1,3 +1,8 @@
+# 0.2.3 (December 11, 2022)
+
+- space calculations are fixed
+- explaining what is quotient filter in readme
+
 # 0.2.2 (December 07, 2022)
 
 - u16 version is included

@@ -8,7 +8,7 @@ The implemantation is based on the book named [Algorithms and Data Structures fo
 
 To use this crate, simply add the following string to your `Cargo.toml`:
 ```
-quotient-filter = "0.2.2"
+quotient-filter = "0.2.3"
 ```
 
 ```rust
