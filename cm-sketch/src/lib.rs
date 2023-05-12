@@ -1,65 +1,80 @@
+#![allow(dead_code)]
+
 use std::{hash::{Hash, Hasher}, collections::hash_map::DefaultHasher};
-
 use hashers::fnv::FNV1aHasher64;
+use thiserror::Error;
+use std::f64::consts::E;
 
-pub mod acmsketch;
-
-const HASH_COUNT: u64 = 3;
+#[derive(Error, Debug)]
+pub enum CmError {
+    #[error("epsilon and delta must be between 0 an 1")]
+    WrongInput,
+}
 
 /// Base data type for count-min-sketch
 /// For thread safe version, check out AcmSketch
 pub struct CmSketch {
     data: Vec<u64>,
-    capacity: u64,
+    depth: usize,
+    width: usize,
 }
 
 impl CmSketch {
     /// Creates a new count-min-sketch
-    // Internally we'll use just an array and 3 hash functions
-    // Instead of array of arrays we can use mod operation + a single array
-    pub fn new(capacity: u64) -> Self {
-        Self {
-            capacity,
-            data: vec![0; (HASH_COUNT * capacity).try_into().unwrap()]
+    /// epsilon is error rate
+    /// delta is the confidence to correctness of estimate, the smaller the higher we're more confident 
+    /// both epsilon and delta must be between 0 and 1, for instance 0,5
+    pub fn new(epsilon: f64, delta: f64) -> Result<Self, CmError> {
+        if epsilon < 0.0 || delta < 0.0 || epsilon > 1.0 || delta > 1.0 {
+            return Err(CmError::WrongInput);
         }
+
+        let width = (E / epsilon).ceil() as usize;
+        let depth = (1. / delta).ln().ceil() as usize;
+        Ok(Self {
+            data: vec![0; width * depth],
+            width,
+            depth
+        })
     }
 
     pub fn update<T>(&mut self, value: T) where T : Hash {
-        self.data[Self::default_hash(self.capacity, &value)] += 1;
-        self.data[Self::xxhash(self.capacity, &value) + 8] += 1;
-        self.data[Self::fnv_hash(self.capacity, &value) + 16] += 1;
+        for i in 0..self.depth {
+            self.data[Self::xxhash(self.width  as u64, &value, i as u64) + (i * self.width)] += 1
+        }
     }
 
-    pub fn estimate<T>(&self, value: T) -> u64
-    where T : Hash {
-        let result_1 = self.data[Self::default_hash(self.capacity, &value)];
-        let result_2 = self.data[Self::xxhash(self.capacity, &value) + 8];
-        let result_3 = self.data[Self::fnv_hash(self.capacity, &value) + 16];
-        let mut smallest = result_1;
-        if result_2 < smallest { smallest = result_2; }
-        if result_3 < smallest { smallest = result_3; }
+    pub fn estimate<T>(&self, value: T) -> u64 where T : Hash {
+        let mut smallest = u64::MAX;
+        for i in 0..self.depth {
+            let count = self.data[Self::xxhash(self.width as u64, &value, i as u64) + (i * self.width)];
+            if count < smallest { smallest = count; }
+        }
         smallest
     }
 
-    fn default_hash<T>(capacity: u64, value: &T) -> usize  
+    fn default_hash<T>(capacity: u64, value: &T, seed: u64) -> usize  
     where T : Hash {
         let mut default_hasher = DefaultHasher::new();
+        default_hasher.write_u64(seed);
         value.hash(&mut default_hasher);
         let result = default_hasher.finish() % capacity;
         result.try_into().unwrap()
     }
 
-    fn xxhash<T>(capacity: u64, value: &T) -> usize  
+    fn xxhash<T>(capacity: u64, value: &T, seed: u64) -> usize  
     where T : Hash {
         let mut xxhasher = xxhash_rust::xxh3::Xxh3::default();
+        xxhasher.write_u64(seed);
         value.hash(&mut xxhasher);
         let result = xxhasher.finish() % capacity;
         result.try_into().unwrap()
     }
 
-    fn fnv_hash<T>(capacity: u64, value: &T) -> usize  
+    fn fnv_hash<T>(capacity: u64, value: &T, seed: u64) -> usize  
     where T : Hash {
         let mut fnvhasher = FNV1aHasher64::default();
+        fnvhasher.write_u64(seed);
         value.hash(&mut fnvhasher);
         let result = fnvhasher.finish() % capacity;
         result.try_into().unwrap()
@@ -72,7 +87,7 @@ mod tests {
 
     #[test]
     fn only_one_updated() {
-        let mut sketch = CmSketch::new(8);
+        let mut sketch = CmSketch::new(0.1, 0.1).unwrap();
         sketch.update(5);
         let result = sketch.estimate(5);
         assert_eq!(1, result);
@@ -80,7 +95,7 @@ mod tests {
 
     #[test]
     fn same_element_multiple_times_updated() {
-        let mut sketch = CmSketch::new(8);
+        let mut sketch = CmSketch::new(0.1, 0.1).unwrap();
         sketch.update(5);
         sketch.update(5);
         sketch.update(5);
@@ -91,7 +106,7 @@ mod tests {
     // Probabilistic test, sometime may fail even though it is correct
     #[test]
     fn different_elements_single_time_updated() {
-        let mut sketch = CmSketch::new(24);
+        let mut sketch = CmSketch::new(0.1, 0.1).unwrap();
         sketch.update(3);
         sketch.update(4);
         sketch.update(5);
@@ -102,7 +117,7 @@ mod tests {
         // Probabilistic test, sometime may fail even though it is correct
         #[test]
         fn different_elements_multiple_time_updated() {
-            let mut sketch = CmSketch::new(24);
+            let mut sketch = CmSketch::new(0.1, 0.1).unwrap();
             sketch.update(3);
             sketch.update(3);
             sketch.update(4);
