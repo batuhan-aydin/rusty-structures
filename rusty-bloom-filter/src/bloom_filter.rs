@@ -1,5 +1,4 @@
 use std::{hash::{Hasher, Hash}, collections::hash_map::DefaultHasher};
-
 use anyhow::Result;
 
 const BITS_PER_SEGMENT: usize = 8;
@@ -8,30 +7,30 @@ const BITS_PER_SEGMENT: usize = 8;
 pub struct BloomFilter {
     pub data: Vec<u8>,
     size: usize,
-    seed: u32,
-    //number_of_bits: f64,
-    num_of_hash_functions: f64
+    seed: u64,
+    number_of_bits: usize,
+    num_of_hash_functions: usize
 }
 
 impl BloomFilter {
     
-    pub fn new(max_size: usize, max_tolerance: Option<f32>, seed: Option<u32>) -> Result<BloomFilter> {
-        let max_tolerance = evalexpr::eval(&format!("math::ln({})", max_tolerance.unwrap_or(1.0)))?.as_float()?;
+    pub fn new(max_size: usize, max_tolerance: Option<f64>, seed: Option<u64>) -> Result<BloomFilter> {
+        let max_tolerance = max_tolerance.unwrap_or(0.01);
         let ln2 = evalexpr::eval("math::ln(2)")?.as_float()?;
-        let calc = -(max_size as f64 * max_tolerance / ln2 / ln2).ceil();
-        let num_of_hash_functions = -(max_tolerance / ln2).ceil();
+        let calc = -(max_size as f64 * f64::ln(max_tolerance) / ln2 / ln2).ceil();
+        let num_of_hash_functions = -((max_tolerance.ln()) / ln2).ceil();
         let num_of_elements = (calc / BITS_PER_SEGMENT as f64).ceil() as usize;
         Ok(
         BloomFilter { 
             data: vec![0; num_of_elements],
             seed: seed.unwrap_or(rand::random()),
             size: 0,
-            //number_of_bits: calc,
-            num_of_hash_functions
+            number_of_bits: calc as usize,
+            num_of_hash_functions: num_of_hash_functions as usize
         })
     } 
 
-    pub fn contains<T>(&self, key: &T, positions: Option<&[u128]>) -> bool
+    pub fn contains<T>(&self, key: &T, positions: Option<&[usize]>) -> bool
     where T : Hash {
         let tmp_new;
         let positions = match positions {
@@ -60,9 +59,10 @@ impl BloomFilter {
     }
 
     /* 
-    pub fn false_positive_probability(&self) -> f64 {
-        (1.0 - std::f64::consts::E.powf(self.num_of_hash_functions * self.size as f64 / self.number_of_bits)).powf(self.num_of_hash_functions)
-    } */
+    fn false_positive_probability(&self) -> f64 {
+        (1.0 - std::f64::consts::E.powf((self.num_of_hash_functions * self.size / self.number_of_bits) as f64)).powf(self.num_of_hash_functions as f64)
+    } 
+    */
 
     fn read_bit(&self, index: usize) -> bool {
         let (element, bit) = self.find_bit_coordinates(index);
@@ -87,25 +87,21 @@ impl BloomFilter {
         (byte_index, bit_offset)
     }
 
-    fn key_2_positions<T>(&self, key: &T) -> Vec<u128>
+    fn key_2_positions<T>(&self, key: &T) -> Vec<usize>
     where T : Hash {
-        let mut xxhasher = twox_hash::XxHash64::with_seed(i);
-        key.hash(&mut xxhasher);
-        let xxhash_result = xxhasher.finish();
+        let mut result = Vec::with_capacity(self.num_of_hash_functions as usize);
+        for i in 0..self.num_of_hash_functions as usize {
+            let mut xxhasher = twox_hash::XxHash64::with_seed(self.seed);
+            key.hash(&mut xxhasher);
+            let xxhash_result = xxhasher.finish() as usize;
+    
+            let mut default_hasher = DefaultHasher::default();
+            key.hash(&mut default_hasher);
+            let default_result = default_hasher.finish() as usize;
 
-        let mut default_hasher = DefaultHasher::default();
-        key.hash(&mut default_hasher);
-        let default_result = default_hasher.finish();
-
-        let result = (0..self.num_of_hash_functions as u64)
-        .map(|i| (xxhash_result + i * default_result + i * i) % self)
-        .
-        //let murmur_result = fastmurmur3::murmur3_x64_128(key, self.seed) ;
-        //let fnv1_result = const_fnv1a_hash::fnv1a_hash_128(key, None);
-
-        //(0..(self.num_of_hash_functions as u128))
-        //.map(|x| (murmur_result.wrapping_add(x.wrapping_mul(fnv1_result)).wrapping_add(x.wrapping_mul(x))) % (self.data.len() * BITS_PER_SEGMENT) as u128)
-        //.collect()
+            result.push((xxhash_result.wrapping_add(i.wrapping_mul(default_result)).wrapping_add(i.wrapping_mul(i))) % self.number_of_bits);
+        }
+        result
     }
 }
 
@@ -115,7 +111,7 @@ mod tests {
 
     #[test]
     fn contains_oneelement_true() {
-        let mut bloom = BloomFilter::new(8, None, None).unwrap();
+        let mut bloom = BloomFilter::new(16, None, None).unwrap();
         bloom.insert(&1_u32.to_be_bytes());
         let result = bloom.contains(&1_u32.to_be_bytes(), None);
 
@@ -124,8 +120,9 @@ mod tests {
 
     #[test]
     fn contains_oneelement_false() {
-        let mut bloom = BloomFilter::new(8, None, None).unwrap();
+        let mut bloom = BloomFilter::new(16, None, None).unwrap();
         bloom.insert(&1_u32.to_be_bytes());
+        dbg!("{:?}", &bloom.data);
         let result = bloom.contains(&2_u32.to_be_bytes(), None);
 
         assert!(!result);
