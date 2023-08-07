@@ -5,8 +5,6 @@ use thiserror::Error;
 use anyhow::{Result, Ok};
 
 pub mod slot;
-pub mod extra;
-pub mod generic;
 
 /// Tombstone: Is the particular bucket has a deleted element? TODO: implement
 /// BucketOccupied: Any hash result with the particular quotient?
@@ -28,9 +26,7 @@ pub(crate) enum QuotientFilterError {
     #[error("Filters need to have the same size for merging")]
     NotEqualSize,
     #[error("Not able to find the quotient to insert")]
-    NotAbleToFindOccupied,
-    #[error("Converting error")]
-    ConvertingError
+    NotAbleToFindOccupied
 }
 
 pub struct QuotientFilter {

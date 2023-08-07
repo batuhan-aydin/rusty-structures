@@ -28,7 +28,7 @@ Supports insertion, deletion, lookup, merging and resizing.
 
 # Implementation
 
-Under extra module, u32 and u16 versions exists, they might be better decisions while using. The quotient filter is essentially a wrapper around vector of remainder(u64, u32 or u16) and a metadata(u8). While initializing we provide the size. However, it's able to resize its size and merge with others.
+The quotient filter is essentially a wrapper around vector of remainder(u64) and a metadata(u8). While initializing we provide the size. However, it's able to resize its size and merge with others.
 
-A lot of bitwise operations happens under the hood. For instance, you initialize QuotientFilter32 with the quotient size 4. It uses left-most 4 bits for indexing(not saved anywhere), and the rest 28 bits are being saved to the table with the metadata. Using metadata you're able to do other operations, you can even bring back original u32 fingerprint, even though 4 bits weren't saved. Resize and merging work through by bit stealing. We steal one bit from remainder, so quotient size becomes 5 bit, remainder size 27 bit, and the table size 2^5 which is double of previous.
+A lot of bitwise operations happens under the hood. For instance, you initialize QuotientFilter with the quotient size 4. It uses left-most 4 bits for indexing(not saved anywhere), and the rest 60 bits are being saved to the table with the metadata. Using metadata you're able to do other operations, you can even bring back original u64 fingerprint, even though 4 bits weren't saved. Resize and merging work through by bit stealing. We steal one bit from remainder, so quotient size becomes 5 bit, remainder size 59 bit, and the table size 2^5 which is double of previous.
 

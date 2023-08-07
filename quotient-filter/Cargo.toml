@@ -1,6 +1,6 @@
 [package]
 name = "quotient-filter"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 authors = ["Batuhan Aydın <batuhanaydin501@gmail.com>"]
 description = "A quotient filter implementation."
@@ -13,8 +13,8 @@ license = "MIT"
 license-file = "LICENSE"
 
 [dependencies]
-anyhow = "^1.0.66"
-thiserror = "^1.0.37"
+anyhow = "^1.0.72"
+thiserror = "^1.0.44"
 const-fnv1a-hash = "^1.1.0"
 const-murmur3 = "^0.2.1"
-num-traits = "^0.2.15"
+num-traits = "^0.2.16"

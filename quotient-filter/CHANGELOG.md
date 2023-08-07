@@ -1,7 +1,12 @@
+# 0.2.4 (August 07, 2023)
+
+- Cleared extra and generic modules
+- Libraries got updated
+
 # 0.2.3 (December 11, 2022)
 
-- space calculations are fixed
-- explaining what is quotient filter in readme
+- Space calculations are fixed
+- Explaining what is quotient filter in readme
 
 # 0.2.2 (December 07, 2022)
 
