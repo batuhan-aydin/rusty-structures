@@ -6,27 +6,26 @@ use thiserror::Error;
 use std::f64::consts::E;
 
 #[derive(Error, Debug)]
-pub enum CmError {
+pub enum CountMinError {
     #[error("epsilon and delta must be between 0 an 1")]
     WrongInput,
 }
 
 /// Base data type for count-min-sketch
-/// For thread safe version, check out AcmSketch
-pub struct CmSketch {
+pub struct CountMinSketch {
     data: Vec<u64>,
     depth: usize,
     width: usize,
 }
 
-impl CmSketch {
+impl CountMinSketch {
     /// Creates a new count-min-sketch
     /// epsilon is error rate
     /// delta is the confidence to correctness of estimate, the smaller the higher we're more confident 
     /// both epsilon and delta must be between 0 and 1, for instance 0,5
-    pub fn new(epsilon: f64, delta: f64) -> Result<Self, CmError> {
+    pub fn new(epsilon: f64, delta: f64) -> Result<Self, CountMinError> {
         if epsilon < 0.0 || delta < 0.0 || epsilon > 1.0 || delta > 1.0 {
-            return Err(CmError::WrongInput);
+            return Err(CountMinError::WrongInput);
         }
 
         let width = (E / epsilon).ceil() as usize;
@@ -38,9 +37,9 @@ impl CmSketch {
         })
     }
 
-    pub fn update<T>(&mut self, value: T) where T : Hash {
+    pub fn update<T>(&mut self, value: T, frequency: Option<u64>) where T : Hash {
         for i in 0..self.depth {
-            self.data[Self::xxhash(self.width  as u64, &value, i as u64) + (i * self.width)] += 1
+            self.data[Self::xxhash(self.width  as u64, &value, i as u64) + (i * self.width)] += frequency.unwrap_or(1)
         }
     }
 
@@ -87,18 +86,18 @@ mod tests {
 
     #[test]
     fn only_one_updated() {
-        let mut sketch = CmSketch::new(0.1, 0.1).unwrap();
-        sketch.update(5);
+        let mut sketch = CountMinSketch::new(0.1, 0.1).unwrap();
+        sketch.update(5, Some(1));
         let result = sketch.estimate(5);
         assert_eq!(1, result);
     }
 
     #[test]
     fn same_element_multiple_times_updated() {
-        let mut sketch = CmSketch::new(0.1, 0.1).unwrap();
-        sketch.update(5);
-        sketch.update(5);
-        sketch.update(5);
+        let mut sketch = CountMinSketch::new(0.1, 0.1).unwrap();
+        sketch.update(5, Some(1));
+        sketch.update(5, Some(1));
+        sketch.update(5, Some(1));
         let result = sketch.estimate(5);
         assert_eq!(3, result);
     }
@@ -106,10 +105,10 @@ mod tests {
     // Probabilistic test, sometime may fail even though it is correct
     #[test]
     fn different_elements_single_time_updated() {
-        let mut sketch = CmSketch::new(0.1, 0.1).unwrap();
-        sketch.update(3);
-        sketch.update(4);
-        sketch.update(5);
+        let mut sketch = CountMinSketch::new(0.1, 0.1).unwrap();
+        sketch.update(3, Some(1));
+        sketch.update(4, Some(1));
+        sketch.update(5, Some(1));
         let result = sketch.estimate(5);
         assert_eq!(1, result);
     }
@@ -117,13 +116,13 @@ mod tests {
         // Probabilistic test, sometime may fail even though it is correct
         #[test]
         fn different_elements_multiple_time_updated() {
-            let mut sketch = CmSketch::new(0.1, 0.1).unwrap();
-            sketch.update(3);
-            sketch.update(3);
-            sketch.update(4);
-            sketch.update(4);
-            sketch.update(4);
-            sketch.update(5);
+            let mut sketch = CountMinSketch::new(0.1, 0.1).unwrap();
+            sketch.update(3, Some(1));
+            sketch.update(3, Some(1));
+            sketch.update(4, Some(1));
+            sketch.update(4, Some(1));
+            sketch.update(4, Some(1));
+            sketch.update(5, Some(1));
             let result1 = sketch.estimate(3);
             assert_eq!(2, result1);
             let result2 = sketch.estimate(4);
